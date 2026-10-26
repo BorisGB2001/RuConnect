@@ -43,6 +43,11 @@ func (s *Server) adminRoutes(mux *http.ServeMux) {
 	h("PUT /api/admin/address-books/{guid}/rules", s.adminSetABRule)
 	h("GET /api/admin/address-books/{guid}/peers", s.adminListABPeers)
 
+	h("GET /api/admin/servers", s.adminListServers)
+	h("POST /api/admin/servers", s.adminCreateServer)
+	h("PUT /api/admin/servers/{guid}", s.adminUpdateServer)
+	h("DELETE /api/admin/servers/{guid}", s.adminDeleteServer)
+
 	h("GET /api/admin/audit/conns", s.adminAuditConns)
 	h("GET /api/admin/audit/files", s.adminAuditFiles)
 	h("GET /api/admin/audit/alarms", s.adminAuditAlarms)

@@ -1,5 +1,10 @@
-# RuConnect: ID/relay-серверы RustDesk (OSS) + ruconnect (API и веб-панель).
-# Запуск: docker compose up -d
+# RuConnect: RustDesk ID/relay servers (hbbs/hbbr, unmodified) + ruconnect (API and web panel).
+#
+#   cp .env.example .env   # set RUCONNECT_ID_SERVER to this host's public address
+#   docker compose up -d
+#   docker compose logs ruconnect   # first start prints the generated admin password
+#
+# Ports (host network): 21114 API + panel, 21115-21117 and 21118-21119 RustDesk.
 services:
   hbbs:
     image: rustdesk/rustdesk-server:latest
@@ -22,16 +27,19 @@ services:
     restart: unless-stopped
 
   ruconnect:
-    image: ruconnect/server:latest
-    build: .. # пока образ не опубликован, собирается из исходников
+    image: ghcr.io/ruconnect/ruconnect:latest
+    build: .. # builds from source when the image is not available
     container_name: ruconnect-server
-    network_mode: host # 21114/tcp: API для клиентов и веб-панель
-    environment:
-      RUCONNECT_LISTEN: ":21114"
-      RUCONNECT_DB: "/data/ruconnect.db"
+    network_mode: host # 21114/tcp
+    env_file:
+      - path: .env
+        required: false
     volumes:
-      - ./ruconnect:/data
-      - ./data/id_ed25519.pub:/data/id_ed25519.pub:ro # ключ hbbs, панель покажет его для настройки клиентов
+      - ruconnect-data:/data
+      - ./data:/hbbs:ro # hbbs public key (id_ed25519.pub), shown in the panel
     depends_on:
       - hbbs
     restart: unless-stopped
+
+volumes:
+  ruconnect-data:

@@ -31,6 +31,9 @@ type Server struct {
 }
 
 func New(cfg config.Config, st *store.Store, log *slog.Logger, web fs.FS) *Server {
+	if _, err := st.EnsureDefaultServer(context.Background(), cfg.IDServer, cfg.RelayServer); err != nil {
+		log.Error("create default server", "err", err)
+	}
 	return &Server{
 		cfg:      cfg,
 		store:    st,
@@ -106,7 +109,7 @@ func (s *Server) Handler() http.Handler {
 		mux.Handle("GET /", s.panelHandler())
 	}
 
-	return s.middleware(mux)
+	return s.middleware(s.siteRouter(mux))
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {

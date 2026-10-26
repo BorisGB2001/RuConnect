@@ -235,6 +235,22 @@ CREATE TABLE settings (
 	value TEXT NOT NULL
 );
 `,
+	// 2: multi-server support. Each device belongs to the hbbs site it registered with.
+	`
+CREATE TABLE servers (
+	id           INTEGER PRIMARY KEY,
+	guid         TEXT NOT NULL UNIQUE,
+	name         TEXT NOT NULL,
+	slug         TEXT NOT NULL UNIQUE COLLATE NOCASE,
+	id_server    TEXT NOT NULL DEFAULT '',
+	relay_server TEXT NOT NULL DEFAULT '',
+	key          TEXT NOT NULL DEFAULT '',
+	note         TEXT NOT NULL DEFAULT '',
+	created_at   INTEGER NOT NULL
+);
+ALTER TABLE devices ADD COLUMN server_id INTEGER REFERENCES servers(id) ON DELETE SET NULL;
+CREATE INDEX devices_server ON devices(server_id);
+`,
 }
 
 func (s *Store) migrate(ctx context.Context) error {

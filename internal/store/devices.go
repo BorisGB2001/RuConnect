@@ -23,21 +23,27 @@ type Device struct {
 	UserName     string `json:"user_name"`
 	GroupID      *int64 `json:"-"`
 	GroupName    string `json:"group_name"`
+	ServerID     *int64 `json:"-"`
+	ServerName   string `json:"server_name"`
+	ServerSlug   string `json:"server_slug"`
 	Conns        int    `json:"conns"`
 	LastOnlineAt int64  `json:"last_online_at"`
 	CreatedAt    int64  `json:"created_at"`
 }
 
 const deviceCols = `d.id, d.guid, d.uuid, d.hostname, d.username, d.os, d.cpu, d.memory, d.version, d.note, d.ip,
-	d.user_id, COALESCE(u.name, ''), d.group_id, COALESCE(g.name, ''), d.conns, d.last_online_at, d.created_at`
+	d.user_id, COALESCE(u.name, ''), d.group_id, COALESCE(g.name, ''), d.server_id, COALESCE(sv.name, ''), COALESCE(sv.slug, ''),
+	d.conns, d.last_online_at, d.created_at`
 
-const deviceFrom = ` FROM devices d LEFT JOIN users u ON u.id = d.user_id LEFT JOIN device_groups g ON g.id = d.group_id`
+const deviceFrom = ` FROM devices d LEFT JOIN users u ON u.id = d.user_id LEFT JOIN device_groups g ON g.id = d.group_id
+	LEFT JOIN servers sv ON sv.id = d.server_id`
 
 func scanDevice(row interface{ Scan(...any) error }) (*Device, error) {
 	var d Device
-	var uid, gid sql.NullInt64
+	var uid, gid, sid sql.NullInt64
 	err := row.Scan(&d.ID, &d.GUID, &d.UUID, &d.Hostname, &d.Username, &d.OS, &d.CPU, &d.Memory, &d.Version,
-		&d.Note, &d.IP, &uid, &d.UserName, &gid, &d.GroupName, &d.Conns, &d.LastOnlineAt, &d.CreatedAt)
+		&d.Note, &d.IP, &uid, &d.UserName, &gid, &d.GroupName, &sid, &d.ServerName, &d.ServerSlug,
+		&d.Conns, &d.LastOnlineAt, &d.CreatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -49,6 +55,9 @@ func scanDevice(row interface{ Scan(...any) error }) (*Device, error) {
 	}
 	if gid.Valid {
 		d.GroupID = &gid.Int64
+	}
+	if sid.Valid {
+		d.ServerID = &sid.Int64
 	}
 	return &d, nil
 }
@@ -87,9 +96,10 @@ func (s *Store) GetDevice(ctx context.Context, id string) (*Device, error) {
 }
 
 type DeviceFilter struct {
-	UserID  int64 // only devices assigned to this user
-	GroupID int64
-	Search  string
+	UserID   int64 // only devices assigned to this user
+	GroupID  int64
+	ServerID int64
+	Search   string
 	// OnlineSince, when non-zero, keeps only devices seen at or after this unix time.
 	OnlineSince int64
 }
@@ -104,6 +114,10 @@ func (s *Store) ListDevices(ctx context.Context, f DeviceFilter, p Page) ([]*Dev
 	if f.GroupID != 0 {
 		where = append(where, "d.group_id = ?")
 		args = append(args, f.GroupID)
+	}
+	if f.ServerID != 0 {
+		where = append(where, "d.server_id = ?")
+		args = append(args, f.ServerID)
 	}
 	if f.OnlineSince != 0 {
 		where = append(where, "d.last_online_at >= ?")

@@ -30,6 +30,8 @@ func (s *Server) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 	resp := map[string]any{}
 	if !known {
 		resp["sysinfo"] = true
+	} else if err := s.store.SetDeviceServer(r.Context(), req.ID, site(r).ID); err != nil {
+		s.log.Warn("device server", "id", req.ID, "err", err)
 	}
 	if d := s.sessions.update(req.ID, req.Conns); len(d) > 0 {
 		resp["disconnect"] = d
@@ -62,6 +64,9 @@ func (s *Server) handleSysinfo(w http.ResponseWriter, r *http.Request) {
 	}); err != nil {
 		s.writeStoreError(w, err)
 		return
+	}
+	if err := s.store.SetDeviceServer(ctx, id, site(r).ID); err != nil {
+		s.log.Warn("device server", "id", id, "err", err)
 	}
 	s.applyPresets(r, id, presets{
 		UserName:        str(req["preset-user-name"]),
@@ -190,7 +195,7 @@ func (s *Server) handleDevicesCLI(w http.ResponseWriter, r *http.Request, admin 
 		writeError(w, http.StatusBadRequest, "Invalid request")
 		return
 	}
-	id := str(req["id"])
+	id := s.normalizePeerID(r, str(req["id"]))
 	d, err := s.store.GetDevice(r.Context(), id)
 	if errors.Is(err, store.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "Device "+id+" is not registered yet; make sure the client uses this server and try again")
@@ -247,6 +252,10 @@ func (s *Server) handleDevicesDeploy(w http.ResponseWriter, r *http.Request) {
 		return
 	case errors.Is(err, store.ErrNotFound):
 		if err := s.store.UpsertSysInfo(r.Context(), store.SysInfo{ID: req.ID, UUID: req.UUID, IP: s.clientIP(r)}); err != nil {
+			s.writeStoreError(w, err)
+			return
+		}
+		if err := s.store.SetDeviceServer(r.Context(), req.ID, site(r).ID); err != nil {
 			s.writeStoreError(w, err)
 			return
 		}

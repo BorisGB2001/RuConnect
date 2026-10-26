@@ -1,5 +1,5 @@
 /deploy/data/
-/deploy/ruconnect/
+/deploy/.env
 /bin/
 /dist/
 node_modules/

@@ -1,0 +1,8 @@
+.git
+bin
+dist
+deploy
+docs
+*.db
+*.md
+!README.md

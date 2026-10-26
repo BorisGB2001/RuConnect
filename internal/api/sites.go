@@ -1,0 +1,218 @@
+package api
+
+import (
+	"context"
+	"errors"
+	"net/http"
+	"strings"
+
+	"github.com/ruconnect/ruconnect/internal/store"
+)
+
+// Multi-server support.
+//
+// A RuConnect instance serves several hbbs/hbbr sites. Clients of a site use
+// the API URL "<base>/s/<slug>" (plain "<base>" for the default site), so
+// every request tells us which site its client is registered with.
+//
+// The stock client can reach a peer through another rendezvous server when
+// the peer id is written as "ID@host[:port]?key=<public key>". Device lists
+// handed to clients use that form for devices of other sites, so one client
+// reaches devices on every site without changing its own settings.
+
+type siteKey struct{}
+
+// siteRouter strips a "/s/<slug>" prefix and records the site in the context.
+func (s *Server) siteRouter(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		slug := store.DefaultServerSlug
+		if rest, ok := strings.CutPrefix(r.URL.Path, "/s/"); ok {
+			var tail string
+			slug, tail, _ = strings.Cut(rest, "/")
+			r = r.Clone(r.Context())
+			r.URL.Path = "/" + tail
+			r.URL.RawPath = ""
+		}
+		site, err := s.store.ServerBySlug(r.Context(), slug)
+		if errors.Is(err, store.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "Unknown server "+slug)
+			return
+		}
+		if err != nil {
+			s.writeStoreError(w, err)
+			return
+		}
+		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), siteKey{}, site)))
+	})
+}
+
+// site returns the site the request came through.
+func site(r *http.Request) *store.Server {
+	if v, ok := r.Context().Value(siteKey{}).(*store.Server); ok {
+		return v
+	}
+	return &store.Server{Slug: store.DefaultServerSlug, IsDefault: true}
+}
+
+// rendezvous returns the effective ID server and key of a site; the default
+// site falls back to the configured address and the hbbs key file.
+func (s *Server) rendezvous(v *store.Server) (host, key string) {
+	host, key = v.IDServer, v.Key
+	if v.IsDefault {
+		if host == "" {
+			host = s.cfg.IDServer
+		}
+		if key == "" {
+			key = s.publicKey()
+		}
+	}
+	return host, key
+}
+
+// peerResolver rewrites device ids for clients of one site.
+type peerResolver struct {
+	from    int64
+	servers map[int64]*store.Server
+	device  map[string]int64
+	addr    map[int64]string // site id -> "@host?key=..." suffix
+	hosts   map[string]bool  // known rendezvous hosts, for normalizing ids back
+}
+
+func (s *Server) newPeerResolver(r *http.Request, ids []string) (*peerResolver, error) {
+	ctx := r.Context()
+	list, err := s.store.ListServers(ctx)
+	if err != nil {
+		return nil, err
+	}
+	pr := &peerResolver{from: site(r).ID, servers: map[int64]*store.Server{}, addr: map[int64]string{}, hosts: map[string]bool{}}
+	for _, v := range list {
+		pr.servers[v.ID] = v
+		host, key := s.rendezvous(v)
+		if host == "" {
+			continue
+		}
+		pr.hosts[strings.ToLower(host)] = true
+		suffix := "@" + host
+		if key != "" {
+			suffix += "?key=" + key
+		}
+		pr.addr[v.ID] = suffix
+	}
+	if pr.device, err = s.store.DeviceServers(ctx, ids); err != nil {
+		return nil, err
+	}
+	return pr, nil
+}
+
+// address returns the id a client of the request's site should dial.
+func (pr *peerResolver) address(id string) string {
+	if strings.Contains(id, "@") {
+		return id
+	}
+	sid, ok := pr.device[id]
+	if !ok || sid == pr.from {
+		return id
+	}
+	if suffix, ok := pr.addr[sid]; ok {
+		return id + suffix
+	}
+	return id
+}
+
+// normalizePeerID turns "ID@host?key=..." back into "ID" when host is one of
+// our sites, so address book entries keep their canonical id.
+func (s *Server) normalizePeerID(r *http.Request, id string) string {
+	raw, rest, ok := strings.Cut(id, "@")
+	if !ok {
+		return id
+	}
+	host, _, _ := strings.Cut(rest, "?")
+	host = strings.ToLower(host)
+	list, err := s.store.ListServers(r.Context())
+	if err != nil {
+		return id
+	}
+	for _, v := range list {
+		if h, _ := s.rendezvous(v); h != "" && strings.EqualFold(h, host) {
+			return raw
+		}
+	}
+	return id
+}
+
+// Panel API for sites.
+
+func (s *Server) adminListServers(w http.ResponseWriter, r *http.Request, u *store.User) {
+	list, err := s.store.ListServers(r.Context())
+	if err != nil {
+		s.writeStoreError(w, err)
+		return
+	}
+	for _, v := range list {
+		if v.IsDefault {
+			v.IDServer, v.Key = s.rendezvous(v)
+		}
+	}
+	writeList(w, len(list), list)
+}
+
+func (s *Server) serverInput(w http.ResponseWriter, r *http.Request) (store.ServerInput, bool) {
+	var req struct {
+		Name        string `json:"name"`
+		Slug        string `json:"slug"`
+		IDServer    string `json:"id_server"`
+		RelayServer string `json:"relay_server"`
+		Key         string `json:"key"`
+		Note        string `json:"note"`
+	}
+	if err := readJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "Invalid request")
+		return store.ServerInput{}, false
+	}
+	return store.ServerInput{Name: req.Name, Slug: req.Slug, IDServer: req.IDServer, RelayServer: req.RelayServer,
+		Key: req.Key, Note: req.Note}, true
+}
+
+func (s *Server) writeServerResult(w http.ResponseWriter, v *store.Server, err error) {
+	switch {
+	case errors.Is(err, store.ErrConflict):
+		writeError(w, http.StatusConflict, "A server with this slug already exists")
+	case errors.Is(err, store.ErrNotFound):
+		writeError(w, http.StatusNotFound, "Not found")
+	case err != nil:
+		writeError(w, http.StatusBadRequest, err.Error())
+	default:
+		writeJSON(w, http.StatusOK, v)
+	}
+}
+
+func (s *Server) adminCreateServer(w http.ResponseWriter, r *http.Request, u *store.User) {
+	in, ok := s.serverInput(w, r)
+	if !ok {
+		return
+	}
+	v, err := s.store.CreateServer(r.Context(), in)
+	s.writeServerResult(w, v, err)
+}
+
+func (s *Server) adminUpdateServer(w http.ResponseWriter, r *http.Request, u *store.User) {
+	in, ok := s.serverInput(w, r)
+	if !ok {
+		return
+	}
+	v, err := s.store.UpdateServer(r.Context(), r.PathValue("guid"), in)
+	s.writeServerResult(w, v, err)
+}
+
+func (s *Server) adminDeleteServer(w http.ResponseWriter, r *http.Request, u *store.User) {
+	err := s.store.DeleteServer(r.Context(), r.PathValue("guid"))
+	if errors.Is(err, store.ErrNotFound) {
+		writeError(w, http.StatusBadRequest, "Server not found or it is the default server")
+		return
+	}
+	if err != nil {
+		s.writeStoreError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}

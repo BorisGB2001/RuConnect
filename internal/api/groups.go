@@ -67,10 +67,19 @@ func (s *Server) handleAccessiblePeers(w http.ResponseWriter, r *http.Request, u
 		s.writeStoreError(w, err)
 		return
 	}
+	ids := make([]string, 0, len(devices))
+	for _, d := range devices {
+		ids = append(ids, d.ID)
+	}
+	pr, err := s.newPeerResolver(r, ids)
+	if err != nil {
+		s.writeStoreError(w, err)
+		return
+	}
 	out := make([]peerPayload, 0, len(devices))
 	for _, d := range devices {
 		out = append(out, peerPayload{
-			ID:              d.ID,
+			ID:              pr.address(d.ID),
 			Status:          1,
 			User:            d.UserName,
 			UserName:        d.UserName,

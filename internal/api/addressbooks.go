@@ -76,7 +76,17 @@ func (s *Server) handleABPeers(w http.ResponseWriter, r *http.Request, u *store.
 		s.writeStoreError(w, err)
 		return
 	}
+	ids := make([]string, 0, len(peers))
 	for _, p := range peers {
+		ids = append(ids, p.ID)
+	}
+	pr, err := s.newPeerResolver(r, ids)
+	if err != nil {
+		s.writeStoreError(w, err)
+		return
+	}
+	for _, p := range peers {
+		p.ID = pr.address(p.ID)
 		// Personal books keep the client's password hash, shared books a plain password.
 		if ab.Personal {
 			p.Password = ""
@@ -110,7 +120,7 @@ func (s *Server) handleABPeerAdd(w http.ResponseWriter, r *http.Request, u *stor
 		writeError(w, http.StatusBadRequest, "Invalid request")
 		return
 	}
-	p := &store.ABPeer{ID: strings.TrimSpace(str(req["id"]))}
+	p := &store.ABPeer{ID: s.normalizePeerID(r, strings.TrimSpace(str(req["id"])))}
 	if p.ID == "" {
 		writeError(w, http.StatusBadRequest, "Peer id is required")
 		return
@@ -168,7 +178,7 @@ func (s *Server) handleABPeerUpdate(w http.ResponseWriter, r *http.Request, u *s
 		writeError(w, http.StatusBadRequest, "Invalid request")
 		return
 	}
-	id := strings.TrimSpace(str(req["id"]))
+	id := s.normalizePeerID(r, strings.TrimSpace(str(req["id"])))
 	if id == "" {
 		writeError(w, http.StatusBadRequest, "Peer id is required")
 		return
@@ -189,6 +199,9 @@ func (s *Server) handleABPeerDelete(w http.ResponseWriter, r *http.Request, u *s
 	if err := readJSON(r, &ids); err != nil {
 		writeError(w, http.StatusBadRequest, "Invalid request")
 		return
+	}
+	for i, id := range ids {
+		ids[i] = s.normalizePeerID(r, id)
 	}
 	if err := s.store.DeleteABPeers(r.Context(), ab.ID, ids); err != nil {
 		s.writeStoreError(w, err)

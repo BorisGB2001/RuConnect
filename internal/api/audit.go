@@ -22,7 +22,8 @@ func (s *Server) handleAuditConn(w http.ResponseWriter, r *http.Request) {
 	_, hasConn := req["conn_id"]
 	if hasNote && !hasConn {
 		// Note from the controlling side: {id: remote peer id, session_id, note}.
-		if err := s.store.SetConnNoteBySession(ctx, str(req["id"]), str(req["session_id"]), str(req["note"])); err != nil {
+		id := s.normalizePeerID(r, str(req["id"]))
+		if err := s.store.SetConnNoteBySession(ctx, id, str(req["session_id"]), str(req["note"])); err != nil {
 			s.log.Warn("audit note", "err", err)
 		}
 		writeEmpty(w)
@@ -144,7 +145,7 @@ func (s *Server) handleAuditAlarm(w http.ResponseWriter, r *http.Request) {
 // the caller opened, so the client can attach a note at the end.
 func (s *Server) handleAuditConnActive(w http.ResponseWriter, r *http.Request, u *store.User) {
 	q := r.URL.Query()
-	guid, err := s.store.ConnGUIDBySession(r.Context(), q.Get("id"), q.Get("session_id"))
+	guid, err := s.store.ConnGUIDBySession(r.Context(), s.normalizePeerID(r, q.Get("id")), q.Get("session_id"))
 	if err != nil {
 		s.writeStoreError(w, err)
 		return
