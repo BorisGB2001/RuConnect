@@ -47,6 +47,7 @@ func (s *Server) adminRoutes(mux *http.ServeMux) {
 	h("POST /api/admin/servers", s.adminCreateServer)
 	h("PUT /api/admin/servers/{guid}", s.adminUpdateServer)
 	h("DELETE /api/admin/servers/{guid}", s.adminDeleteServer)
+	h("GET /api/admin/servers/{guid}/check", s.adminCheckServer)
 
 	h("GET /api/admin/user-groups", s.adminListUserGroups)
 	h("POST /api/admin/user-groups", s.adminSaveUserGroup)

@@ -47,7 +47,7 @@
 ## Multi-server
 - [x] Sites (hbbs servers) managed in the panel, `/s/<slug>` API URLs per site
 - [x] Peers of other sites handed to clients as `ID@host?key=` (address books, accessible devices)
-- [ ] Per-site health checks (hbbs reachability) in the panel
+- [x] Per-site health checks (hbbs/hbbr TCP reachability, API)
 
 ## Stage 4. Delivery
 - [ ] Multi-arch image (amd64, arm64) published to a registry

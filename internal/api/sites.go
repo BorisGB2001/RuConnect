@@ -3,8 +3,12 @@ package api
 import (
 	"context"
 	"errors"
+	"net"
 	"net/http"
+	"strconv"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/ruconnect/ruconnect/internal/store"
 )
@@ -215,4 +219,60 @@ func (s *Server) adminDeleteServer(w http.ResponseWriter, r *http.Request, u *st
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+type probeResult struct {
+	Address   string `json:"address"`
+	OK        bool   `json:"ok"`
+	LatencyMS int64  `json:"latency_ms"`
+	Error     string `json:"error,omitempty"`
+}
+
+// probeTCP checks that host (default port def) accepts TCP connections.
+func probeTCP(host string, def int) probeResult {
+	if host == "" {
+		return probeResult{Error: "not configured"}
+	}
+	addr := host
+	if _, _, err := net.SplitHostPort(host); err != nil {
+		addr = net.JoinHostPort(strings.Trim(host, "[]"), strconv.Itoa(def))
+	}
+	start := time.Now()
+	c, err := net.DialTimeout("tcp", addr, 3*time.Second)
+	res := probeResult{Address: addr, LatencyMS: time.Since(start).Milliseconds()}
+	if err != nil {
+		res.Error = err.Error()
+		return res
+	}
+	c.Close()
+	res.OK = true
+	return res
+}
+
+// adminCheckServer probes a site's hbbs (21116) and hbbr (21117) ports.
+func (s *Server) adminCheckServer(w http.ResponseWriter, r *http.Request, u *store.User) {
+	v, err := s.store.ServerByGUID(r.Context(), r.PathValue("guid"))
+	if err != nil {
+		s.writeStoreError(w, err)
+		return
+	}
+	host, _ := s.rendezvous(v)
+	relay := v.RelayServer
+	if relay == "" && v.IsDefault {
+		relay = s.cfg.RelayServer
+	}
+	if relay == "" {
+		if h, _, err := net.SplitHostPort(host); err == nil {
+			relay = h
+		} else {
+			relay = host
+		}
+	}
+	var wg sync.WaitGroup
+	var idRes, relayRes probeResult
+	wg.Add(2)
+	go func() { defer wg.Done(); idRes = probeTCP(host, 21116) }()
+	go func() { defer wg.Done(); relayRes = probeTCP(relay, 21117) }()
+	wg.Wait()
+	writeJSON(w, http.StatusOK, map[string]any{"id_server": idRes, "relay_server": relayRes})
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"net"
 	"net/http"
 	"strings"
 	"testing"
@@ -118,4 +119,26 @@ func mustPersonal(t *testing.T, st *store.Store) *store.AddressBook {
 		t.Fatal(err)
 	}
 	return ab
+}
+
+func TestProbeTCP(t *testing.T) {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close()
+	if r := probeTCP(l.Addr().String(), 21116); !r.OK {
+		t.Fatalf("listening port reported down: %+v", r)
+	}
+	addr := l.Addr().String()
+	l.Close()
+	if r := probeTCP(addr, 21116); r.OK || r.Error == "" {
+		t.Fatalf("closed port reported up: %+v", r)
+	}
+	if r := probeTCP("", 21116); r.OK {
+		t.Fatal("empty host reported up")
+	}
+	if r := probeTCP("127.0.0.1", 9); r.Address != "127.0.0.1:9" {
+		t.Fatalf("default port not applied: %+v", r)
+	}
 }
