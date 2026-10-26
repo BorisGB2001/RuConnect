@@ -6,8 +6,9 @@ import (
 	"github.com/ruconnect/ruconnect/internal/store"
 )
 
-// The client's "Accessible devices" tab. Administrators see everything,
-// other users see themselves and the devices assigned to them.
+// The client's "Accessible devices" tab. Administrators see everything;
+// other users see the members of their user group, their own devices and
+// the device groups granted to their user group.
 
 func (s *Server) handleAccessibleGroups(w http.ResponseWriter, r *http.Request, u *store.User) {
 	var uid int64
@@ -60,7 +61,7 @@ type peerPayload struct {
 func (s *Server) handleAccessiblePeers(w http.ResponseWriter, r *http.Request, u *store.User) {
 	f := store.DeviceFilter{}
 	if !u.IsAdmin {
-		f.UserID = u.ID
+		f.AccessibleTo = u.ID
 	}
 	devices, total, err := s.store.ListDevices(r.Context(), f, pageOf(r))
 	if err != nil {

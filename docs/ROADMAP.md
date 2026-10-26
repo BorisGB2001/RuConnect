@@ -30,7 +30,7 @@
 - [x] Devices and device groups, remote disconnect
 - [x] Shared address books and sharing rules
 - [x] Connection, file transfer and alarm logs
-- [ ] User groups, per-group access to device groups
+- [x] User groups, per-group access to device groups (API)
 - [ ] Filters and CSV export for logs
 - [ ] Russian UI locale
 

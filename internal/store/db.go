@@ -289,6 +289,22 @@ CREATE TABLE strategies (
 ALTER TABLE devices ADD COLUMN strategy_id INTEGER REFERENCES strategies(id) ON DELETE SET NULL;
 ALTER TABLE device_groups ADD COLUMN strategy_id INTEGER REFERENCES strategies(id) ON DELETE SET NULL;
 `,
+	// 5: user groups and their access to device groups.
+	`
+CREATE TABLE user_groups (
+	id         INTEGER PRIMARY KEY,
+	guid       TEXT NOT NULL UNIQUE,
+	name       TEXT NOT NULL UNIQUE COLLATE NOCASE,
+	note       TEXT NOT NULL DEFAULT '',
+	created_at INTEGER NOT NULL
+);
+ALTER TABLE users ADD COLUMN group_id INTEGER REFERENCES user_groups(id) ON DELETE SET NULL;
+CREATE TABLE user_group_access (
+	user_group_id   INTEGER NOT NULL REFERENCES user_groups(id) ON DELETE CASCADE,
+	device_group_id INTEGER NOT NULL REFERENCES device_groups(id) ON DELETE CASCADE,
+	PRIMARY KEY (user_group_id, device_group_id)
+);
+`,
 }
 
 func (s *Store) migrate(ctx context.Context) error {

@@ -48,6 +48,11 @@ func (s *Server) adminRoutes(mux *http.ServeMux) {
 	h("PUT /api/admin/servers/{guid}", s.adminUpdateServer)
 	h("DELETE /api/admin/servers/{guid}", s.adminDeleteServer)
 
+	h("GET /api/admin/user-groups", s.adminListUserGroups)
+	h("POST /api/admin/user-groups", s.adminSaveUserGroup)
+	h("PUT /api/admin/user-groups/{guid}", s.adminSaveUserGroup)
+	h("DELETE /api/admin/user-groups/{guid}", s.adminDeleteUserGroup)
+
 	h("GET /api/admin/strategies", s.adminListStrategies)
 	h("POST /api/admin/strategies", s.adminCreateStrategy)
 	h("PUT /api/admin/strategies/{guid}", s.adminUpdateStrategy)
@@ -136,13 +141,35 @@ func (s *Server) adminCreateToken(w http.ResponseWriter, r *http.Request, u *sto
 }
 
 type userRequest struct {
-	Name        string `json:"name"`
-	DisplayName string `json:"display_name"`
-	Email       string `json:"email"`
-	Note        string `json:"note"`
-	Password    string `json:"password"`
-	Status      *int   `json:"status"`
-	IsAdmin     bool   `json:"is_admin"`
+	Name        string  `json:"name"`
+	DisplayName string  `json:"display_name"`
+	Email       string  `json:"email"`
+	Note        string  `json:"note"`
+	Password    string  `json:"password"`
+	Status      *int    `json:"status"`
+	IsAdmin     bool    `json:"is_admin"`
+	GroupGUID   *string `json:"group_guid"` // user group; "" removes the user from it
+}
+
+// applyUserGroup sets the user's group when the request names one.
+func (s *Server) applyUserGroup(w http.ResponseWriter, r *http.Request, u *store.User, groupGUID *string) bool {
+	if groupGUID == nil {
+		return true
+	}
+	var gid int64
+	if *groupGUID != "" {
+		g, err := s.store.UserGroupByGUID(r.Context(), *groupGUID)
+		if err != nil {
+			s.writeStoreError(w, err)
+			return false
+		}
+		gid = g.ID
+	}
+	if err := s.store.SetUserGroup(r.Context(), u.ID, gid); err != nil {
+		s.writeStoreError(w, err)
+		return false
+	}
+	return true
 }
 
 func (q userRequest) input() store.UserInput {
@@ -182,6 +209,10 @@ func (s *Server) adminCreateUser(w http.ResponseWriter, r *http.Request, u *stor
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	if !s.applyUserGroup(w, r, nu, req.GroupGUID) {
+		return
+	}
+	nu, _ = s.store.UserByGUID(r.Context(), nu.GUID)
 	s.log.Info("user created", "user", nu.Name, "by", u.Name)
 	writeJSON(w, http.StatusOK, nu)
 }
@@ -214,6 +245,10 @@ func (s *Server) adminUpdateUser(w http.ResponseWriter, r *http.Request, u *stor
 		s.writeStoreError(w, err)
 		return
 	}
+	if !s.applyUserGroup(w, r, nu, req.GroupGUID) {
+		return
+	}
+	nu, _ = s.store.UserByGUID(r.Context(), nu.GUID)
 	writeJSON(w, http.StatusOK, nu)
 }
 

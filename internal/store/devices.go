@@ -97,10 +97,12 @@ func (s *Store) GetDevice(ctx context.Context, id string) (*Device, error) {
 }
 
 type DeviceFilter struct {
-	UserID   int64 // only devices assigned to this user
-	GroupID  int64
-	ServerID int64
-	Search   string
+	UserID int64 // only devices assigned to this user
+	// AccessibleTo keeps devices the user owns or reaches through their user group.
+	AccessibleTo int64
+	GroupID      int64
+	ServerID     int64
+	Search       string
 	// OnlineSince, when non-zero, keeps only devices seen at or after this unix time.
 	OnlineSince int64
 }
@@ -111,6 +113,10 @@ func (s *Store) ListDevices(ctx context.Context, f DeviceFilter, p Page) ([]*Dev
 	if f.UserID != 0 {
 		where = append(where, "d.user_id = ?")
 		args = append(args, f.UserID)
+	}
+	if f.AccessibleTo != 0 {
+		where = append(where, "(d.user_id = ? OR d.group_id IN "+accessibleGroups+")")
+		args = append(args, f.AccessibleTo, f.AccessibleTo)
 	}
 	if f.GroupID != 0 {
 		where = append(where, "d.group_id = ?")
@@ -306,14 +312,18 @@ func (s *Store) DeviceGroupByGUID(ctx context.Context, guid string) (*DeviceGrou
 	return scanGroup(s.db.QueryRowContext(ctx, groupSelect+` WHERE g.guid = ?`, guid))
 }
 
-// ListDeviceGroups returns all groups, or, when userID is non-zero, only the
-// groups containing at least one device assigned to that user.
+// accessibleGroups selects the device groups a user (bound twice) can reach
+// through their user group.
+const accessibleGroups = `(SELECT a.device_group_id FROM user_group_access a JOIN users u ON u.group_id = a.user_group_id WHERE u.id = ?)`
+
+// ListDeviceGroups returns all groups, or, when userID is non-zero, the groups
+// that user can reach: granted to their user group, or holding their devices.
 func (s *Store) ListDeviceGroups(ctx context.Context, userID int64, p Page) ([]*DeviceGroup, int, error) {
 	cond := "1=1"
 	var args []any
 	if userID != 0 {
-		cond = "EXISTS (SELECT 1 FROM devices d WHERE d.group_id = g.id AND d.user_id = ?)"
-		args = append(args, userID)
+		cond = "(EXISTS (SELECT 1 FROM devices d WHERE d.group_id = g.id AND d.user_id = ?) OR g.id IN " + accessibleGroups + ")"
+		args = append(args, userID, userID)
 	}
 	var total int
 	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM device_groups g WHERE `+cond, args...).Scan(&total); err != nil {
