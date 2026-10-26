@@ -13,7 +13,9 @@ services:
   hbbs:
     image: rustdesk/rustdesk-server:1.1.16
     container_name: ruconnect-hbbs
-    command: hbbs
+    # -r tells clients which relay to use when a direct connection fails;
+    # without it peers show online but cannot connect across NAT/firewalls.
+    command: hbbs -r ${RUCONNECT_RELAY_SERVER:-${RUCONNECT_ID_SERVER:?set RUCONNECT_ID_SERVER in .env}}
     network_mode: host # 21115/tcp, 21116/tcp+udp, 21118/tcp
     volumes:
       - ./data:/root

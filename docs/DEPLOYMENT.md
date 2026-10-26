@@ -110,5 +110,6 @@ pin its public key.
 | Device does not appear in the panel | `docker compose logs ruconnect`: is there a `POST /api/sysinfo`? The client uploads sysinfo when its service starts |
 | "Wrong username or password" for everyone | After 5 failures from one IP, logins are blocked for 5 minutes |
 | A reinstalled machine with the same ID is not updated | Devices are bound to the machine that registered the ID first; delete the device in the panel to let the new machine register |
+| Peers show online but connections time out | hbbs must know the relay: the compose file starts it with `-r $RUCONNECT_RELAY_SERVER` (default: the ID server). Port 21117/tcp must be reachable from every client; `docker compose logs hbbs` should print `relay-servers=["..."]` |
 | Lost admin password | `docker compose exec ruconnect ruconnect passwd admin '<new password>'` |
 | OIDC "redirect_uri mismatch" | Register exactly the redirect URI shown under **Login providers**; set `RUCONNECT_API_SERVER` behind a proxy |
