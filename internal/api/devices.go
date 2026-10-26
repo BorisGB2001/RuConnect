@@ -30,8 +30,21 @@ func (s *Server) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 	resp := map[string]any{}
 	if !known {
 		resp["sysinfo"] = true
-	} else if err := s.store.SetDeviceServer(r.Context(), req.ID, site(r).ID); err != nil {
-		s.log.Warn("device server", "id", req.ID, "err", err)
+	} else {
+		if err := s.store.SetDeviceServer(r.Context(), req.ID, site(r).ID); err != nil {
+			s.log.Warn("device server", "id", req.ID, "err", err)
+		}
+		// Push the device's strategy when the client's copy is out of date.
+		st, err := s.store.EffectiveStrategy(r.Context(), req.ID)
+		switch {
+		case err != nil:
+			s.log.Warn("strategy", "id", req.ID, "err", err)
+		case st != nil && st.ModifiedAt != req.ModifiedAt:
+			resp["modified_at"] = st.ModifiedAt
+			resp["strategy"] = map[string]any{"config_options": st.Options, "extra": map[string]string{}}
+		case st == nil && req.ModifiedAt != 0:
+			resp["modified_at"] = 0
+		}
 	}
 	if d := s.sessions.update(req.ID, req.Conns); len(d) > 0 {
 		resp["disconnect"] = d
@@ -70,6 +83,7 @@ func (s *Server) handleSysinfo(w http.ResponseWriter, r *http.Request) {
 	}
 	s.applyPresets(r, id, presets{
 		UserName:        str(req["preset-user-name"]),
+		StrategyName:    str(req["preset-strategy-name"]),
 		DeviceGroupName: str(req["preset-device-group-name"]),
 		Note:            str(req["preset-note"]),
 		ABName:          str(req["preset-address-book-name"]),
@@ -84,9 +98,9 @@ func (s *Server) handleSysinfo(w http.ResponseWriter, r *http.Request) {
 // presets are deployment-time assignments, sent by the client in sysinfo
 // (from its preset-* options) or by "rustdesk --assign" via /api/devices/cli.
 type presets struct {
-	UserName, DeviceGroupName, Note            string
-	ABName, ABTag, ABAlias, ABPassword, ABNote string
-	DeviceUsername, DeviceName                 string
+	UserName, DeviceGroupName, Note, StrategyName string
+	ABName, ABTag, ABAlias, ABPassword, ABNote    string
+	DeviceUsername, DeviceName                    string
 }
 
 // applyPresets assigns a device to a user, group and shared address book.
@@ -112,6 +126,15 @@ func (s *Server) applyPresets(r *http.Request, id string, p presets, force bool)
 			up.GroupID = &g.ID
 		} else {
 			problems = append(problems, "device group "+p.DeviceGroupName+" not found")
+		}
+	}
+	if p.StrategyName != "" {
+		if st, err := s.store.StrategyByName(ctx, p.StrategyName); err != nil {
+			problems = append(problems, "strategy "+p.StrategyName+" not found")
+		} else if devStrategy, _, err := s.store.StrategyNames(ctx, id); err == nil && (force || devStrategy == "") {
+			if err := s.store.SetDeviceStrategy(ctx, id, st.ID); err != nil {
+				problems = append(problems, err.Error())
+			}
 		}
 	}
 	if p.Note != "" && (force || d.Note == "") {
@@ -211,6 +234,7 @@ func (s *Server) handleDevicesCLI(w http.ResponseWriter, r *http.Request, admin 
 	}
 	problems := s.applyPresets(r, id, presets{
 		UserName:        str(req["user_name"]),
+		StrategyName:    str(req["strategy_name"]),
 		DeviceGroupName: str(req["device_group_name"]),
 		Note:            str(req["note"]),
 		ABName:          str(req["address_book_name"]),

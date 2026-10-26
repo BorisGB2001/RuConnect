@@ -274,6 +274,21 @@ CREATE TABLE oidc_identities (
 	PRIMARY KEY (provider_id, subject)
 );
 `,
+	// 4: strategies (client option sets pushed through heartbeat).
+	`
+CREATE TABLE strategies (
+	id          INTEGER PRIMARY KEY,
+	guid        TEXT NOT NULL UNIQUE,
+	name        TEXT NOT NULL UNIQUE COLLATE NOCASE,
+	note        TEXT NOT NULL DEFAULT '',
+	options     TEXT NOT NULL DEFAULT '{}',
+	is_default  INTEGER NOT NULL DEFAULT 0,
+	modified_at INTEGER NOT NULL,
+	created_at  INTEGER NOT NULL
+);
+ALTER TABLE devices ADD COLUMN strategy_id INTEGER REFERENCES strategies(id) ON DELETE SET NULL;
+ALTER TABLE device_groups ADD COLUMN strategy_id INTEGER REFERENCES strategies(id) ON DELETE SET NULL;
+`,
 }
 
 func (s *Store) migrate(ctx context.Context) error {

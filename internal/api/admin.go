@@ -48,6 +48,13 @@ func (s *Server) adminRoutes(mux *http.ServeMux) {
 	h("PUT /api/admin/servers/{guid}", s.adminUpdateServer)
 	h("DELETE /api/admin/servers/{guid}", s.adminDeleteServer)
 
+	h("GET /api/admin/strategies", s.adminListStrategies)
+	h("POST /api/admin/strategies", s.adminCreateStrategy)
+	h("PUT /api/admin/strategies/{guid}", s.adminUpdateStrategy)
+	h("DELETE /api/admin/strategies/{guid}", s.adminDeleteStrategy)
+	h("PUT /api/admin/devices/{id}/strategy", s.adminSetDeviceStrategy)
+	h("PUT /api/admin/groups/{guid}/strategy", s.adminSetGroupStrategy)
+
 	h("GET /api/admin/oidc", s.adminListOIDC)
 	h("POST /api/admin/oidc", s.adminCreateOIDC)
 	h("PUT /api/admin/oidc/{guid}", s.adminUpdateOIDC)
