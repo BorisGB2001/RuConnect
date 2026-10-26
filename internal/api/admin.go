@@ -615,6 +615,10 @@ func auditFilter(r *http.Request) store.AuditFilter {
 }
 
 func (s *Server) adminAuditConns(w http.ResponseWriter, r *http.Request, u *store.User) {
+	if wantCSV(r) {
+		s.exportConns(w, r)
+		return
+	}
 	items, total, err := s.store.ListConnAudits(r.Context(), auditFilter(r), pageOf(r))
 	if err != nil {
 		s.writeStoreError(w, err)
@@ -624,6 +628,10 @@ func (s *Server) adminAuditConns(w http.ResponseWriter, r *http.Request, u *stor
 }
 
 func (s *Server) adminAuditFiles(w http.ResponseWriter, r *http.Request, u *store.User) {
+	if wantCSV(r) {
+		s.exportFiles(w, r)
+		return
+	}
 	items, total, err := s.store.ListFileAudits(r.Context(), auditFilter(r), pageOf(r))
 	if err != nil {
 		s.writeStoreError(w, err)
@@ -633,6 +641,10 @@ func (s *Server) adminAuditFiles(w http.ResponseWriter, r *http.Request, u *stor
 }
 
 func (s *Server) adminAuditAlarms(w http.ResponseWriter, r *http.Request, u *store.User) {
+	if wantCSV(r) {
+		s.exportAlarms(w, r)
+		return
+	}
 	items, total, err := s.store.ListAlarmAudits(r.Context(), auditFilter(r), pageOf(r))
 	if err != nil {
 		s.writeStoreError(w, err)

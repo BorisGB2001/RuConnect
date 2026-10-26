@@ -31,7 +31,7 @@
 - [x] Shared address books and sharing rules
 - [x] Connection, file transfer and alarm logs
 - [x] User groups, per-group access to device groups (API)
-- [ ] Filters and CSV export for logs
+- [x] Filters and CSV export for logs (API: `?format=csv`)
 - [ ] Russian UI locale
 
 ## Stage 3. Enterprise features
