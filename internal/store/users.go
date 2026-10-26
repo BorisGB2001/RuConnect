@@ -68,6 +68,14 @@ func HashPassword(pw string) (string, error) {
 	return string(h), err
 }
 
+var dummyHash, _ = bcrypt.GenerateFromPassword([]byte("dummy-password"), bcrypt.DefaultCost)
+
+// DummyPasswordCheck spends the same time as a real password check, so
+// responses do not reveal whether a user name exists.
+func DummyPasswordCheck(pw string) {
+	bcrypt.CompareHashAndPassword(dummyHash, []byte(pw))
+}
+
 // CheckPassword reports whether pw matches the user's password hash.
 func (u *User) CheckPassword(pw string) bool {
 	if u.PasswordHash == "" {
@@ -242,7 +250,14 @@ func (s *Store) ListUsers(ctx context.Context, f UserFilter, p Page) ([]*User, i
 }
 
 // Token is an access token issued at login. Only its SHA-256 hash is stored.
+// Token kinds. Deployment tokens only work for rustdesk --assign / --deploy.
+const (
+	TokenSession = ""
+	TokenDeploy  = "deploy"
+)
+
 type Token struct {
+	Kind       string
 	UserID     int64
 	DeviceID   string
 	DeviceUUID string
@@ -271,9 +286,9 @@ func RandomToken(n int) string {
 func (s *Store) CreateToken(ctx context.Context, t Token, ttl time.Duration) (string, error) {
 	raw := RandomToken(32)
 	n := now()
-	_, err := s.db.ExecContext(ctx, `INSERT INTO tokens (hash, user_id, device_id, device_uuid, device_info, ip, created_at, last_used_at, expires_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		hashToken(raw), t.UserID, t.DeviceID, t.DeviceUUID, t.DeviceInfo, t.IP, n, n, n+int64(ttl.Seconds()))
+	_, err := s.db.ExecContext(ctx, `INSERT INTO tokens (hash, kind, user_id, device_id, device_uuid, device_info, ip, created_at, last_used_at, expires_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		hashToken(raw), t.Kind, t.UserID, t.DeviceID, t.DeviceUUID, t.DeviceInfo, t.IP, n, n, n+int64(ttl.Seconds()))
 	return raw, err
 }
 
@@ -284,9 +299,9 @@ func (s *Store) UserByToken(ctx context.Context, raw string) (*User, *Token, err
 	}
 	h := hashToken(raw)
 	var t Token
-	err := s.db.QueryRowContext(ctx, `SELECT user_id, device_id, device_uuid, device_info, ip, created_at, last_used_at, expires_at
+	err := s.db.QueryRowContext(ctx, `SELECT kind, user_id, device_id, device_uuid, device_info, ip, created_at, last_used_at, expires_at
 		FROM tokens WHERE hash = ?`, h).
-		Scan(&t.UserID, &t.DeviceID, &t.DeviceUUID, &t.DeviceInfo, &t.IP, &t.CreatedAt, &t.LastUsedAt, &t.ExpiresAt)
+		Scan(&t.Kind, &t.UserID, &t.DeviceID, &t.DeviceUUID, &t.DeviceInfo, &t.IP, &t.CreatedAt, &t.LastUsedAt, &t.ExpiresAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil, ErrNotFound
 	}
@@ -314,6 +329,78 @@ func (s *Store) UserByToken(ctx context.Context, raw string) (*User, *Token, err
 func (s *Store) DeleteToken(ctx context.Context, raw string) error {
 	_, err := s.db.ExecContext(ctx, `DELETE FROM tokens WHERE hash = ?`, hashToken(raw))
 	return err
+}
+
+// DeleteUserTokens signs a user out everywhere except the token keepRaw.
+func (s *Store) DeleteUserTokens(ctx context.Context, userID int64, keepRaw string) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM tokens WHERE user_id = ? AND hash != ?`, userID, hashToken(keepRaw))
+	return err
+}
+
+// TokenInfo describes a stored token without revealing it. ID is a prefix
+// of the token hash, enough to revoke it.
+type TokenInfo struct {
+	ID         string `json:"id"`
+	Kind       string `json:"kind"`
+	UserName   string `json:"user_name"`
+	DeviceID   string `json:"device_id"`
+	DeviceInfo string `json:"device_info"`
+	IP         string `json:"ip"`
+	CreatedAt  int64  `json:"created_at"`
+	LastUsedAt int64  `json:"last_used_at"`
+	ExpiresAt  int64  `json:"expires_at"`
+}
+
+func (s *Store) ListTokens(ctx context.Context, kind string) ([]TokenInfo, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT substr(t.hash, 1, 16), t.kind, u.name, t.device_id, t.device_info, t.ip,
+		t.created_at, t.last_used_at, t.expires_at FROM tokens t JOIN users u ON u.id = t.user_id
+		WHERE t.kind = ? AND t.expires_at >= ? ORDER BY t.created_at DESC LIMIT 1000`, kind, now())
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []TokenInfo{}
+	for rows.Next() {
+		var t TokenInfo
+		if err := rows.Scan(&t.ID, &t.Kind, &t.UserName, &t.DeviceID, &t.DeviceInfo, &t.IP, &t.CreatedAt, &t.LastUsedAt, &t.ExpiresAt); err != nil {
+			return nil, err
+		}
+		out = append(out, t)
+	}
+	return out, rows.Err()
+}
+
+// RevokeToken deletes the token whose hash starts with id (16 hex characters).
+func (s *Store) RevokeToken(ctx context.Context, id string) error {
+	if len(id) != 16 {
+		return ErrNotFound
+	}
+	res, err := s.db.ExecContext(ctx, `DELETE FROM tokens WHERE substr(hash, 1, 16) = ?`, id)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// SetAuthSource records where an account comes from ("ldap", "oidc", or "" for local).
+func (s *Store) SetAuthSource(ctx context.Context, userID int64, source string) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE users SET auth_source = ? WHERE id = ?`, source, userID)
+	return err
+}
+
+func (s *Store) AuthSource(ctx context.Context, userID int64) (string, error) {
+	var src string
+	err := s.db.QueryRowContext(ctx, `SELECT auth_source FROM users WHERE id = ?`, userID).Scan(&src)
+	return src, err
+}
+
+func (s *Store) HasOIDCIdentity(ctx context.Context, userID int64) (bool, error) {
+	var n int
+	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM oidc_identities WHERE user_id = ?`, userID).Scan(&n)
+	return n > 0, err
 }
 
 func (s *Store) DeleteExpiredTokens(ctx context.Context) error {

@@ -23,17 +23,22 @@ Open these ports on the firewall:
 Client settings: ID server `rustdesk.example.com`, API server `http://rustdesk.example.com:21114`,
 key from `deploy/data/id_ed25519.pub`.
 
-### HTTPS with Caddy
+### HTTPS (recommended)
+
+Plain HTTP on 21114 sends passwords and tokens unencrypted. The compose file has an optional Caddy front
+end that gets a Let's Encrypt certificate automatically. In `.env` set:
 
 ```
-rustdesk.example.com {
-	reverse_proxy 127.0.0.1:21114
-}
+RUCONNECT_DOMAIN=rustdesk.example.com
+RUCONNECT_API_SERVER=https://rustdesk.example.com
+RUCONNECT_LISTEN=127.0.0.1:21114
+RUCONNECT_TRUST_PROXY=true
 ```
 
-Set `RUCONNECT_TRUST_PROXY=true` and `RUCONNECT_API_SERVER=https://rustdesk.example.com`, and use
-`https://rustdesk.example.com` as the API server in clients. Do not use `https://...:21114`: the client
-drops that port.
+then `docker compose --profile https up -d` (ports 80 and 443 must be reachable). Clients use
+`https://rustdesk.example.com` as the API server. Do not use `https://...:21114`: the client drops that
+port. With your own reverse proxy, forward to `127.0.0.1:21114` the same way; RuConnect takes the client
+address from the right-most `X-Forwarded-For` entry.
 
 ## 2. Several sites (multi-server)
 
@@ -104,5 +109,6 @@ pin its public key.
 | The client's login button is missing | The API server field must be set, and must not point to a `*.rustdesk.com` host |
 | Device does not appear in the panel | `docker compose logs ruconnect`: is there a `POST /api/sysinfo`? The client uploads sysinfo when its service starts |
 | "Wrong username or password" for everyone | After 5 failures from one IP, logins are blocked for 5 minutes |
+| A reinstalled machine with the same ID is not updated | Devices are bound to the machine that registered the ID first; delete the device in the panel to let the new machine register |
 | Lost admin password | `docker compose exec ruconnect ruconnect passwd admin '<new password>'` |
 | OIDC "redirect_uri mismatch" | Register exactly the redirect URI shown under **Login providers**; set `RUCONNECT_API_SERVER` behind a proxy |

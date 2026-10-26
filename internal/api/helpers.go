@@ -13,14 +13,38 @@ import (
 	"github.com/ruconnect/ruconnect/internal/store"
 )
 
-const maxBody = 8 << 20
+// Request size limits. Device and login requests are small; only the legacy
+// address book (one JSON blob per user) needs a large body.
+const (
+	maxBody      = 256 << 10
+	maxLargeBody = 8 << 20
+
+	maxID    = 64  // RustDesk device id
+	maxUUID  = 128 // base64 machine uid
+	maxConns = 64  // connection ids per heartbeat
+	maxField = 256 // hostnames, user names, peer names, ...
+	maxText  = 4096
+)
+
+// clip truncates s to at most n bytes.
+func clip(s string, n int) string {
+	if len(s) > n {
+		return s[:n]
+	}
+	return s
+}
 
 type userHandler func(w http.ResponseWriter, r *http.Request, u *store.User)
 
 // readJSON decodes the request body into v. An empty body is not an error:
 // the client sends several POSTs without a body.
-func readJSON(r *http.Request, v any) error {
-	b, err := io.ReadAll(io.LimitReader(r.Body, maxBody))
+func readJSON(r *http.Request, v any) error { return readJSONLimit(r, v, maxBody) }
+
+func readJSONLimit(r *http.Request, v any, limit int64) error {
+	b, err := io.ReadAll(io.LimitReader(r.Body, limit+1))
+	if err == nil && int64(len(b)) > limit {
+		return errors.New("request body too large")
+	}
 	if err != nil {
 		return err
 	}
@@ -73,6 +97,8 @@ func (s *Server) writeStoreError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusNotFound, "Not found")
 	case errors.Is(err, store.ErrConflict):
 		writeError(w, http.StatusConflict, "Already exists")
+	case errors.Is(err, store.ErrFull):
+		writeError(w, http.StatusBadRequest, "The address book is full")
 	default:
 		s.log.Error("store", "err", err)
 		writeError(w, http.StatusInternalServerError, "Internal server error")
@@ -91,15 +117,32 @@ func (s *Server) authUser(r *http.Request) (*store.User, *store.Token, error) {
 	return s.store.UserByToken(r.Context(), bearerToken(r))
 }
 
-func (s *Server) withUser(h userHandler) http.HandlerFunc {
+func (s *Server) withUser(h userHandler) http.HandlerFunc { return s.withToken(h, false) }
+
+// withDeploy is withAdmin that also accepts deployment tokens.
+func (s *Server) withDeploy(h userHandler) http.HandlerFunc {
+	return s.withToken(func(w http.ResponseWriter, r *http.Request, u *store.User) {
+		if !u.IsAdmin {
+			writeError(w, http.StatusForbidden, "Admin required!")
+			return
+		}
+		h(w, r, u)
+	}, true)
+}
+
+func (s *Server) withToken(h userHandler, allowDeploy bool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		u, _, err := s.authUser(r)
+		u, tok, err := s.authUser(r)
 		if errors.Is(err, store.ErrNotFound) {
 			writeError(w, http.StatusUnauthorized, "Invalid token")
 			return
 		}
 		if err != nil {
 			s.writeStoreError(w, err)
+			return
+		}
+		if tok.Kind == store.TokenDeploy && !allowDeploy {
+			writeError(w, http.StatusForbidden, "Deployment tokens only work for rustdesk --assign and --deploy")
 			return
 		}
 		h(w, r, u)
@@ -125,8 +168,11 @@ func pageOf(r *http.Request) store.Page {
 
 func (s *Server) clientIP(r *http.Request) string {
 	if s.cfg.TrustProxy {
+		// Proxies append the address they saw, so only the right-most entry
+		// was written by our proxy; earlier ones come from the client.
 		if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-			return strings.TrimSpace(strings.Split(xff, ",")[0])
+			parts := strings.Split(xff, ",")
+			return clip(strings.TrimSpace(parts[len(parts)-1]), 64)
 		}
 		if xr := r.Header.Get("X-Real-IP"); xr != "" {
 			return strings.TrimSpace(xr)

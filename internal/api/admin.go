@@ -17,6 +17,8 @@ func (s *Server) adminRoutes(mux *http.ServeMux) {
 	h("GET /api/admin/overview", s.adminOverview)
 	h("PUT /api/admin/password", s.adminChangePassword)
 	h("POST /api/admin/tokens", s.adminCreateToken)
+	h("GET /api/admin/tokens", s.adminListTokens)
+	h("DELETE /api/admin/tokens/{id}", s.adminRevokeToken)
 	h("GET /api/admin/deploy-config", s.adminDeployConfig)
 
 	h("GET /api/admin/users", s.adminListUsers)
@@ -121,6 +123,11 @@ func (s *Server) adminChangePassword(w http.ResponseWriter, r *http.Request, u *
 		s.writeStoreError(w, err)
 		return
 	}
+	// Sign out every other session, so a leaked token stops working.
+	if err := s.store.DeleteUserTokens(r.Context(), u.ID, bearerToken(r)); err != nil {
+		s.writeStoreError(w, err)
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
@@ -136,13 +143,30 @@ func (s *Server) adminCreateToken(w http.ResponseWriter, r *http.Request, u *sto
 	if req.Days <= 0 || req.Days > 3650 {
 		req.Days = 365
 	}
-	tok, err := s.store.CreateToken(r.Context(), store.Token{UserID: u.ID, DeviceInfo: `{"type":"cli"}`, IP: s.clientIP(r)},
+	tok, err := s.store.CreateToken(r.Context(), store.Token{Kind: store.TokenDeploy, UserID: u.ID, DeviceInfo: `{"type":"cli"}`, IP: s.clientIP(r)},
 		time.Duration(req.Days)*24*time.Hour)
 	if err != nil {
 		s.writeStoreError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"token": tok, "days": req.Days})
+}
+
+func (s *Server) adminListTokens(w http.ResponseWriter, r *http.Request, u *store.User) {
+	list, err := s.store.ListTokens(r.Context(), store.TokenDeploy)
+	if err != nil {
+		s.writeStoreError(w, err)
+		return
+	}
+	writeList(w, len(list), list)
+}
+
+func (s *Server) adminRevokeToken(w http.ResponseWriter, r *http.Request, u *store.User) {
+	if err := s.store.RevokeToken(r.Context(), r.PathValue("id")); err != nil {
+		s.writeStoreError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
 type userRequest struct {
@@ -177,6 +201,10 @@ func (s *Server) applyUserGroup(w http.ResponseWriter, r *http.Request, u *store
 	return true
 }
 
+func validStatus(q userRequest) bool {
+	return q.Status == nil || *q.Status == store.UserNormal || *q.Status == store.UserDisabled || *q.Status == store.UserUnverified
+}
+
 func (q userRequest) input() store.UserInput {
 	st := store.UserNormal
 	if q.Status != nil {
@@ -205,6 +233,10 @@ func (s *Server) adminCreateUser(w http.ResponseWriter, r *http.Request, u *stor
 		writeError(w, http.StatusBadRequest, "Password must be at least 8 characters")
 		return
 	}
+	if !validStatus(req) {
+		writeError(w, http.StatusBadRequest, "Invalid status")
+		return
+	}
 	nu, err := s.store.CreateUser(r.Context(), req.input())
 	if errors.Is(err, store.ErrConflict) {
 		writeError(w, http.StatusConflict, "A user with this name already exists")
@@ -230,6 +262,10 @@ func (s *Server) adminUpdateUser(w http.ResponseWriter, r *http.Request, u *stor
 	}
 	if req.Password != "" && len(req.Password) < 8 {
 		writeError(w, http.StatusBadRequest, "Password must be at least 8 characters")
+		return
+	}
+	if !validStatus(req) {
+		writeError(w, http.StatusBadRequest, "Invalid status")
 		return
 	}
 	target, err := s.store.UserByGUID(r.Context(), r.PathValue("guid"))

@@ -19,6 +19,7 @@ import (
 var (
 	ErrNotFound = errors.New("not found")
 	ErrConflict = errors.New("already exists")
+	ErrFull     = errors.New("limit reached")
 )
 
 var memSeq atomic.Int64
@@ -304,6 +305,12 @@ CREATE TABLE user_group_access (
 	device_group_id INTEGER NOT NULL REFERENCES device_groups(id) ON DELETE CASCADE,
 	PRIMARY KEY (user_group_id, device_group_id)
 );
+`,
+	// 6: security hardening: account origin and token scopes.
+	`
+ALTER TABLE users ADD COLUMN auth_source TEXT NOT NULL DEFAULT '';
+ALTER TABLE tokens ADD COLUMN kind TEXT NOT NULL DEFAULT '';
+CREATE INDEX tokens_kind ON tokens(kind);
 `,
 }
 

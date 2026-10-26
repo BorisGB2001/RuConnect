@@ -18,9 +18,12 @@ type heartbeatRequest struct {
 
 func (s *Server) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 	var req heartbeatRequest
-	if err := readJSON(r, &req); err != nil || req.ID == "" {
+	if err := readJSON(r, &req); err != nil || req.ID == "" || len(req.ID) > maxID || len(req.UUID) > maxUUID {
 		writeError(w, http.StatusBadRequest, "Invalid request")
 		return
+	}
+	if len(req.Conns) > maxConns {
+		req.Conns = req.Conns[:maxConns]
 	}
 	known, err := s.store.Heartbeat(r.Context(), req.ID, req.UUID, s.clientIP(r), len(req.Conns))
 	if err != nil {
@@ -29,8 +32,12 @@ func (s *Server) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 	}
 	resp := map[string]any{}
 	if !known {
+		// Unknown device or wrong uuid: ask for sysinfo and keep no state.
 		resp["sysinfo"] = true
-	} else {
+		writeJSON(w, http.StatusOK, resp)
+		return
+	}
+	{
 		if err := s.store.SetDeviceServer(r.Context(), req.ID, site(r).ID); err != nil {
 			s.log.Warn("device server", "id", req.ID, "err", err)
 		}
@@ -59,22 +66,30 @@ func (s *Server) handleSysinfo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id, uuid := str(req["id"]), str(req["uuid"])
-	if id == "" || uuid == "" {
+	if id == "" || uuid == "" || len(id) > maxID || len(uuid) > maxUUID {
 		writeText(w, "ID_NOT_FOUND")
 		return
 	}
 	ctx := r.Context()
-	if err := s.store.UpsertSysInfo(ctx, store.SysInfo{
+	_, err := s.store.UpsertSysInfo(ctx, store.SysInfo{
 		ID:       id,
 		UUID:     uuid,
-		Hostname: str(req["hostname"]),
-		Username: str(req["username"]),
-		OS:       str(req["os"]),
-		CPU:      str(req["cpu"]),
-		Memory:   str(req["memory"]),
-		Version:  str(req["version"]),
+		Hostname: clip(str(req["hostname"]), maxField),
+		Username: clip(str(req["username"]), maxField),
+		OS:       clip(str(req["os"]), maxField),
+		CPU:      clip(str(req["cpu"]), maxField),
+		Memory:   clip(str(req["memory"]), 64),
+		Version:  clip(str(req["version"]), 64),
 		IP:       s.clientIP(r),
-	}); err != nil {
+	})
+	if errors.Is(err, store.ErrConflict) {
+		// Another machine already owns this id. Any reply other than
+		// SYSINFO_UPDATED / ID_NOT_FOUND makes the client retry in 120 s.
+		s.log.Warn("sysinfo rejected: device id is bound to another machine", "id", id, "ip", s.clientIP(r))
+		writeText(w, "UUID_MISMATCH")
+		return
+	}
+	if err != nil {
 		s.writeStoreError(w, err)
 		return
 	}
@@ -275,7 +290,7 @@ func (s *Server) handleDevicesDeploy(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"result": "ID_TAKEN"})
 		return
 	case errors.Is(err, store.ErrNotFound):
-		if err := s.store.UpsertSysInfo(r.Context(), store.SysInfo{ID: req.ID, UUID: req.UUID, IP: s.clientIP(r)}); err != nil {
+		if _, err := s.store.UpsertSysInfo(r.Context(), store.SysInfo{ID: req.ID, UUID: req.UUID, IP: s.clientIP(r)}); err != nil {
 			s.writeStoreError(w, err)
 			return
 		}

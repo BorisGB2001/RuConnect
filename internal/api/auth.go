@@ -63,15 +63,23 @@ func toPayload(u *store.User) userPayload {
 
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	var req loginRequest
-	if err := readJSON(r, &req); err != nil {
+	if err := readJSON(r, &req); err != nil || len(req.Username) > maxField || len(req.Password) > maxField ||
+		len(req.ID) > maxID || len(req.UUID) > maxUUID {
 		writeError(w, http.StatusBadRequest, "Invalid request")
 		return
 	}
 	ip := s.clientIP(r)
-	key := ip + "|" + strings.ToLower(strings.TrimSpace(req.Username))
-	if s.logins.Blocked(key) {
+	name := strings.ToLower(strings.TrimSpace(req.Username))
+	// Failures are limited per client and per account, so neither one IP
+	// nor many IPs can keep guessing one account's password or TOTP code.
+	key, acct := ip+"|"+name, "user|"+name
+	if s.logins.Blocked(key) || s.accountLogins.Blocked(acct) {
 		writeError(w, http.StatusTooManyRequests, "Too many failed attempts, try again later")
 		return
+	}
+	fail := func() {
+		s.logins.Fail(key)
+		s.accountLogins.Fail(acct)
 	}
 
 	switch req.Type {
@@ -82,14 +90,17 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		ok := u != nil && u.CheckPassword(req.Password)
+		if u == nil {
+			store.DummyPasswordCheck(req.Password) // same timing as for existing users
+		}
 		if !ok {
 			if lu := s.ldapLogin(r, u, req.Username, req.Password); lu != nil {
 				u, ok = lu, true
 			}
 		}
 		if !ok {
-			s.logins.Fail(key)
-			s.log.Warn("login failed", "user", req.Username, "ip", ip)
+			fail()
+			s.log.Warn("login failed", "user", clip(req.Username, 64), "ip", ip)
 			writeError(w, http.StatusUnauthorized, "Wrong username or password")
 			return
 		}
@@ -126,7 +137,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		used := fmt.Sprintf("%d|%s", u.ID, strings.TrimSpace(code))
 		if !strings.EqualFold(u.Name, strings.TrimSpace(req.Username)) || s.totpUsed.Has(used) ||
 			!totp.Verify(u.TOTPSecret, code, time.Now()) {
-			s.logins.Fail(key)
+			fail()
 			if s.tfa.Fail(req.Secret) {
 				writeError(w, http.StatusUnauthorized, "Too many wrong codes, please log in again")
 				return
@@ -189,7 +200,7 @@ func (s *Server) loginToken(r *http.Request, u *store.User, deviceID, uuid strin
 	}
 	// A client logging in claims its device for the user, unless an admin assigned it already.
 	if deviceID != "" {
-		if err := s.store.AssignDeviceUserIfUnset(r.Context(), deviceID, u.ID); err != nil {
+		if err := s.store.AssignDeviceUserIfUnset(r.Context(), deviceID, uuid, u.ID); err != nil {
 			s.log.Warn("assign device", "id", deviceID, "err", err)
 		}
 	}
@@ -199,8 +210,10 @@ func (s *Server) loginToken(r *http.Request, u *store.User, deviceID, uuid strin
 
 // loginLimiter blocks a key (ip|user) for a while after repeated failures.
 type loginLimiter struct {
-	mu    sync.Mutex
-	fails map[string]*failState
+	mu            sync.Mutex
+	fails         map[string]*failState
+	max           int
+	window, block time.Duration
 }
 
 type failState struct {
@@ -209,13 +222,12 @@ type failState struct {
 	until time.Time
 }
 
-const (
-	maxLoginFails   = 5
-	loginFailWindow = 5 * time.Minute
-	loginBlockTime  = 5 * time.Minute
-)
+// maxLimiterKeys bounds the limiter's memory under a flood of distinct keys.
+const maxLimiterKeys = 100000
 
-func newLoginLimiter() *loginLimiter { return &loginLimiter{fails: map[string]*failState{}} }
+func newLoginLimiter(maxFails int, window, block time.Duration) *loginLimiter {
+	return &loginLimiter{fails: map[string]*failState{}, max: maxFails, window: window, block: block}
+}
 
 func (l *loginLimiter) Blocked(key string) bool {
 	l.mu.Lock()
@@ -228,21 +240,24 @@ func (l *loginLimiter) Fail(key string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	n := time.Now()
-	if len(l.fails) > 10000 {
+	if len(l.fails) > maxLimiterKeys/2 {
 		for k, f := range l.fails {
-			if n.Sub(f.first) > loginFailWindow && n.After(f.until) {
+			if n.Sub(f.first) > l.window && n.After(f.until) {
 				delete(l.fails, k)
 			}
 		}
 	}
 	f := l.fails[key]
-	if f == nil || n.Sub(f.first) > loginFailWindow {
+	if f == nil && len(l.fails) >= maxLimiterKeys {
+		return
+	}
+	if f == nil || n.Sub(f.first) > l.window {
 		f = &failState{first: n}
 		l.fails[key] = f
 	}
 	f.count++
-	if f.count >= maxLoginFails {
-		f.until = n.Add(loginBlockTime)
+	if f.count >= l.max {
+		f.until = n.Add(l.block)
 		f.count = 0
 		f.first = n
 	}

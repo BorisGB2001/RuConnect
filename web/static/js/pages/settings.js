@@ -1,6 +1,6 @@
 import { t } from '../i18n.js';
 import { api, getUser } from '../api.js';
-import { h, clear, pageHeader, card, formField, button, toast, copyField, notice, readForm } from '../ui.js';
+import { h, clear, pageHeader, card, formField, button, toast, toastError, copyField, notice, readForm, timeCell, confirmDialog } from '../ui.js';
 
 export default {
   render(el) {
@@ -31,6 +31,39 @@ export default {
       } finally { btn.disabled = false; }
     });
 
+    // Active deployment tokens, revocable.
+    const list = h('div', { class: 'token-list' });
+    const loadTokens = async () => {
+      let res;
+      try {
+        res = await api.get('/api/admin/tokens');
+      } catch (err) {
+        clear(list).append(notice(err.message, 'error'));
+        return;
+      }
+      const items = (res && res.data) || [];
+      if (!items.length) {
+        clear(list).append(h('p', { class: 'muted small', text: t('settings.noTokens') }));
+        return;
+      }
+      clear(list).append(h('div', { class: 'table-wrap' }, h('table', { class: 'table' },
+        h('thead', {}, h('tr', {},
+          h('th', { text: t('settings.tokenCreated') }), h('th', { text: t('settings.tokenExpires') }),
+          h('th', { text: t('settings.tokenLastUsed') }), h('th', {}))),
+        h('tbody', {}, ...items.map((tk) => h('tr', {},
+          h('td', {}, timeCell(tk.created_at)), h('td', {}, timeCell(tk.expires_at)), h('td', {}, timeCell(tk.last_used_at, true)),
+          h('td', { class: 'actions' }, button(t('settings.revoke'), {
+            kind: 'danger', small: true, onClick: async () => {
+              if (!(await confirmDialog({ message: t('settings.revokeConfirm'), okLabel: t('settings.revoke') }))) return;
+              try {
+                await api.del('/api/admin/tokens/' + encodeURIComponent(tk.id));
+                toast(t('settings.revoked'), 'ok');
+                loadTokens();
+              } catch (err) { toastError(err); }
+            },
+          }))))))));
+    };
+
     // Deployment token.
     const out = h('div', { class: 'token-out' });
     const tokForm = h('form', { class: 'inline-form' },
@@ -51,6 +84,7 @@ export default {
           h('div', { class: 'field' }, h('label', { text: t('settings.deployCmd') }),
             copyField(`rustdesk --deploy --token ${tok}`, { multiline: true })),
           h('p', { class: 'muted small', text: t('settings.cmdHint') }));
+        loadTokens();
       } catch (err) {
         clear(out).append(notice(err.message, 'error'));
       } finally { btn.disabled = false; }
@@ -60,6 +94,9 @@ export default {
       pageHeader(t('settings.title'), t('settings.subtitle', { name: user.name || '' })),
       h('div', { class: 'grid-2' },
         card(t('settings.passwordTitle'), pwForm),
-        card(t('settings.tokenTitle'), h('p', { class: 'muted', text: t('settings.tokenIntro') }), tokForm, out)));
+        card(t('settings.tokenTitle'), h('p', { class: 'muted', text: t('settings.tokenIntro') }),
+          h('p', { class: 'muted small', text: t('settings.tokenScope') }), tokForm, out,
+          h('h3', { class: 'card-subtitle', text: t('settings.activeTokens') }), list)));
+    loadTokens();
   },
 };

@@ -1,6 +1,7 @@
 package api_test
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
@@ -11,6 +12,20 @@ import (
 // checks the client's success rule: 2xx with an empty (whitespace-only) body.
 func (e *env) auditPost(typ string, body any) {
 	e.t.Helper()
+	// Audit posts are only accepted from registered devices; register the
+	// sender (sysinfo is idempotent for the same id and uuid).
+	var m map[string]any
+	switch v := body.(type) {
+	case string:
+		json.Unmarshal([]byte(v), &m)
+	case map[string]any:
+		m = v
+	}
+	if id, _ := m["id"].(string); id != "" {
+		if uuid, _ := m["uuid"].(string); uuid != "" {
+			e.post("/api/sysinfo", "", map[string]any{"id": id, "uuid": uuid, "hostname": "h-" + id})
+		}
+	}
 	r := e.post("/api/audit/"+typ, "", body)
 	if r.Status/100 != 2 || strings.TrimSpace(string(r.Body)) != "" {
 		e.t.Errorf("audit/%s: want 2xx with an empty body, got %s", typ, r)
@@ -265,5 +280,21 @@ func TestAuditNoteForeignSession(t *testing.T) {
 	}
 	if r := e.put("/api/audit", tok, map[string]any{"guid": guid, "note": "x"}); r.Status != http.StatusNotFound {
 		t.Fatalf("foreign controller set a note: %s", r)
+	}
+}
+
+// Audit posts from unregistered devices or with a wrong uuid are refused.
+func TestAuditRequiresKnownDevice(t *testing.T) {
+	e := newEnv(t)
+	if r := e.post("/api/audit/conn", "", rawConn("777", 1, "5", nonce(), `"action":"new"`)); r.Status != http.StatusForbidden {
+		t.Fatalf("unknown device: %s", r)
+	}
+	e.registerDevice("777", "pc")
+	body := `{"id":"777","uuid":"wrong","conn_id":1,"session_id":5,"nonce":"n1","action":"new"}`
+	if r := e.post("/api/audit/conn", "", body); r.Status != http.StatusForbidden {
+		t.Fatalf("wrong uuid: %s", r)
+	}
+	if rows := e.connAudits(); len(rows) != 0 {
+		t.Fatalf("forged rows stored: %v", rows)
 	}
 }

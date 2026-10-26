@@ -428,8 +428,12 @@ func TestDevicesHeartbeatAndAssign(t *testing.T) {
 	if known, err := s.Heartbeat(ctx, "d1", "u1", "1.1.1.1", 0); err != nil || known {
 		t.Errorf("unknown device heartbeat: %v %v", known, err)
 	}
-	if err := s.UpsertSysInfo(ctx, SysInfo{ID: "d1", UUID: "u1", Hostname: "h"}); err != nil {
-		t.Fatal(err)
+	if created, err := s.UpsertSysInfo(ctx, SysInfo{ID: "d1", UUID: "u1", Hostname: "h"}); err != nil || !created {
+		t.Fatal(created, err)
+	}
+	// Another machine cannot take over the id (uuid is bound on first use).
+	if _, err := s.UpsertSysInfo(ctx, SysInfo{ID: "d1", UUID: "evil", Hostname: "x"}); !errors.Is(err, ErrConflict) {
+		t.Fatalf("takeover: %v", err)
 	}
 	if known, _ := s.Heartbeat(ctx, "d1", "u1", "1.1.1.1", 2); !known {
 		t.Error("known device not recognised")
@@ -441,11 +445,16 @@ func TestDevicesHeartbeatAndAssign(t *testing.T) {
 	guid := d.GUID
 	// Re-upload keeps the guid and assignments.
 	u := mkUser(t, s, "x", false)
-	if err := s.AssignDeviceUserIfUnset(ctx, "d1", u.ID); err != nil {
+	// A wrong uuid cannot claim the device.
+	s.AssignDeviceUserIfUnset(ctx, "d1", "evil", u.ID)
+	if d, _ := s.GetDevice(ctx, "d1"); d.UserID != nil {
+		t.Fatal("device claimed with a wrong uuid")
+	}
+	if err := s.AssignDeviceUserIfUnset(ctx, "d1", "u1", u.ID); err != nil {
 		t.Fatal(err)
 	}
 	v := mkUser(t, s, "y", false)
-	s.AssignDeviceUserIfUnset(ctx, "d1", v.ID)
+	s.AssignDeviceUserIfUnset(ctx, "d1", "u1", v.ID)
 	s.UpsertSysInfo(ctx, SysInfo{ID: "d1", UUID: "u1", Hostname: "h2"})
 	d, _ = s.GetDevice(ctx, "d1")
 	if d.GUID != guid || d.Hostname != "h2" || d.UserName != "x" || d.Conns != 2 {

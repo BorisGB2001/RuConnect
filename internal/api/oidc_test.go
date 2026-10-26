@@ -18,6 +18,11 @@ import (
 // fakeIdP is a minimal OpenID provider issuing one fixed identity.
 func fakeIdP(t *testing.T, sub, email, username string) *httptest.Server {
 	t.Helper()
+	return fakeIdPWith(t, sub, email, username, true)
+}
+
+func fakeIdPWith(t *testing.T, sub, email, username string, verified any) *httptest.Server {
+	t.Helper()
 	var idp *httptest.Server
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /.well-known/openid-configuration", func(w http.ResponseWriter, r *http.Request) {
@@ -49,7 +54,7 @@ func fakeIdP(t *testing.T, sub, email, username string) *httptest.Server {
 			http.Error(w, "unauthorized", 401)
 			return
 		}
-		json.NewEncoder(w).Encode(map[string]any{"sub": sub, "email": email, "email_verified": true,
+		json.NewEncoder(w).Encode(map[string]any{"sub": sub, "email": email, "email_verified": verified,
 			"preferred_username": username, "name": "OIDC User"})
 	})
 	idp = httptest.NewServer(mux)
@@ -103,14 +108,30 @@ func runOIDCLogin(t *testing.T, ts *httptest.Server) map[string]any {
 	if r := oidcJSON(t, "GET", query, ""); r["error"] != oidcPending {
 		t.Fatalf("before callback: %v", r)
 	}
-	// Browser: authorize -> redirect -> callback (follows redirects).
+	// Browser: authorize -> redirect -> callback (follows redirects). The
+	// callback only shows a confirmation page; nothing is signed in yet.
 	resp, err := http.Get(authURL)
 	if err != nil {
 		t.Fatal(err)
 	}
 	page, _ := io.ReadAll(resp.Body)
 	resp.Body.Close()
-	t.Logf("callback page: %d %.80s", resp.StatusCode, page)
+	if !strings.Contains(string(page), "Sign in to RustDesk?") {
+		t.Fatalf("no confirmation page: %d %.200s", resp.StatusCode, page)
+	}
+	if r := oidcJSON(t, "GET", query, ""); r["error"] != oidcPending {
+		t.Fatalf("login completed without confirmation: %v", r)
+	}
+	// The user confirms: the form posts state and code back.
+	cb := resp.Request.URL
+	form := url.Values{"state": {cb.Query().Get("state")}, "code": {cb.Query().Get("code")}}
+	resp, err = http.PostForm(ts.URL+"/api/oidc/callback", form)
+	if err != nil {
+		t.Fatal(err)
+	}
+	page, _ = io.ReadAll(resp.Body)
+	resp.Body.Close()
+	t.Logf("confirm page: %d %.80s", resp.StatusCode, page)
 	return oidcJSON(t, "GET", query, "")
 }
 
@@ -169,5 +190,30 @@ func TestOIDCLoginNoAccount(t *testing.T) {
 	res = runOIDCLogin(t, ts)
 	if u, _ := res["user"].(map[string]any); u["name"] != "robert" {
 		t.Fatalf("link by email: %v", res)
+	}
+}
+
+// Accounts are not linked by an unverified (or unflagged) email, and
+// administrators are never linked automatically.
+func TestOIDCLinkingRestrictions(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		verified any
+		admin    bool
+	}{
+		{"unflagged email", nil, false},
+		{"unverified email", false, false},
+		{"admin account", true, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ts, st := oidcTestServer(t)
+			idp := fakeIdPWith(t, "sub-x", "boss@example.com", "intruder", tc.verified)
+			st.CreateOIDCProvider(context.Background(), store.OIDCProviderInput{Name: "acme", Issuer: idp.URL, ClientID: "c", Enabled: true})
+			st.CreateUser(context.Background(), store.UserInput{Name: "boss", Email: "boss@example.com", Status: store.UserNormal, IsAdmin: tc.admin})
+			res := runOIDCLogin(t, ts)
+			if u, _ := res["user"].(map[string]any); u != nil {
+				t.Fatalf("signed in as %v", u["name"])
+			}
+		})
 	}
 }

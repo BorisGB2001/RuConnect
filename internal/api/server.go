@@ -28,11 +28,12 @@ type Server struct {
 	oidc      *oidc.Client
 	oidcFlows *oidcFlows
 
-	nonces   *ttlSet
-	totpUsed *ttlSet // recently accepted TOTP codes, to stop replays
-	logins   *loginLimiter
-	tfa      *tfaChallenges
-	sessions *liveSessions
+	nonces        *ttlSet
+	totpUsed      *ttlSet       // recently accepted TOTP codes, to stop replays
+	logins        *loginLimiter // per client IP and account
+	accountLogins *loginLimiter // per account, across IPs
+	tfa           *tfaChallenges
+	sessions      *liveSessions
 }
 
 func New(cfg config.Config, st *store.Store, log *slog.Logger, web fs.FS) *Server {
@@ -40,17 +41,18 @@ func New(cfg config.Config, st *store.Store, log *slog.Logger, web fs.FS) *Serve
 		log.Error("create default server", "err", err)
 	}
 	return &Server{
-		cfg:       cfg,
-		store:     st,
-		log:       log,
-		web:       web,
-		oidc:      oidc.NewClient(),
-		oidcFlows: newOIDCFlows(),
-		nonces:    newTTLSet(10 * time.Minute),
-		totpUsed:  newTTLSet(2 * time.Minute),
-		logins:    newLoginLimiter(),
-		tfa:       newTFAChallenges(),
-		sessions:  newLiveSessions(),
+		cfg:           cfg,
+		store:         st,
+		log:           log,
+		web:           web,
+		oidc:          oidc.NewClient(),
+		oidcFlows:     newOIDCFlows(),
+		nonces:        newTTLSet(10 * time.Minute),
+		totpUsed:      newTTLSet(2 * time.Minute),
+		logins:        newLoginLimiter(5, 5*time.Minute, 5*time.Minute),
+		accountLogins: newLoginLimiter(30, 15*time.Minute, 15*time.Minute),
+		tfa:           newTFAChallenges(),
+		sessions:      newLiveSessions(),
 	}
 }
 
@@ -68,6 +70,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/oidc/auth", s.handleOIDCAuth)
 	mux.HandleFunc("GET /api/oidc/auth-query", s.handleOIDCQuery)
 	mux.HandleFunc("GET /api/oidc/callback", s.handleOIDCCallback)
+	mux.HandleFunc("POST /api/oidc/callback", s.handleOIDCCallback)
 
 	// Device sync (no user auth; devices identify themselves by id + uuid).
 	mux.HandleFunc("POST /api/heartbeat", s.handleHeartbeat)
@@ -76,7 +79,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/switch-grant", s.handleSwitchGrant)
 
 	// Deployment tooling (admin token).
-	mux.HandleFunc("POST /api/devices/cli", s.withAdmin(s.handleDevicesCLI))
+	mux.HandleFunc("POST /api/devices/cli", s.withDeploy(s.handleDevicesCLI))
 	mux.HandleFunc("POST /api/devices/deploy", s.handleDevicesDeploy)
 
 	// Audit.
@@ -133,6 +136,9 @@ type statusWriter struct {
 	http.ResponseWriter
 	status int
 }
+
+// Unwrap lets http.ResponseController reach the underlying writer.
+func (w *statusWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
 
 func (w *statusWriter) WriteHeader(code int) {
 	w.status = code

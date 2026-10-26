@@ -1,0 +1,5 @@
+# TLS front end for RuConnect (docker compose --profile https up -d).
+# Clients then use https://<RUCONNECT_DOMAIN> as their API server.
+{$RUCONNECT_DOMAIN} {
+	reverse_proxy 127.0.0.1:21114
+}

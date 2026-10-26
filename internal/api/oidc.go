@@ -35,30 +35,43 @@ type oidcFlow struct {
 	done                         bool
 	userID                       int64
 	err                          string
+	requestIP                    string
 }
 
 type oidcFlows struct {
 	mu      sync.Mutex
 	byCode  map[string]*oidcFlow
 	byState map[string]*oidcFlow
+	swept   time.Time
 }
 
 func newOIDCFlows() *oidcFlows {
 	return &oidcFlows{byCode: map[string]*oidcFlow{}, byState: map[string]*oidcFlow{}}
 }
 
-func (f *oidcFlows) add(fl *oidcFlow) {
+// maxOIDCFlows bounds pending logins; /api/oidc/auth needs no credentials.
+const maxOIDCFlows = 10000
+
+// add registers a pending login; it fails when too many are pending.
+func (f *oidcFlows) add(fl *oidcFlow) bool {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	n := time.Now()
-	for k, v := range f.byCode {
-		if n.After(v.expires) {
-			delete(f.byCode, k)
-			delete(f.byState, v.state)
+	if n.Sub(f.swept) > 30*time.Second || len(f.byCode) >= maxOIDCFlows {
+		for k, v := range f.byCode {
+			if n.After(v.expires) {
+				delete(f.byCode, k)
+				delete(f.byState, v.state)
+			}
 		}
+		f.swept = n
+	}
+	if len(f.byCode) >= maxOIDCFlows {
+		return false
 	}
 	f.byCode[fl.code] = fl
 	f.byState[fl.state] = fl
+	return true
 }
 
 func (f *oidcFlows) get(byState bool, key string) *oidcFlow {
@@ -110,12 +123,10 @@ var sitePrefixRe = regexp.MustCompile(`/s/[^/]+/?$`)
 
 // publicBase returns the externally visible base URL of this server, used for
 // the OIDC redirect URI. Site prefixes are dropped so one redirect URI serves
-// every site.
-func (s *Server) publicBase(r *http.Request, apiDomain string) string {
+// every site. The client-supplied apiDomain is deliberately not trusted; set
+// RUCONNECT_API_SERVER when the request's Host is not the public name.
+func (s *Server) publicBase(r *http.Request, _ string) string {
 	base := s.cfg.APIServer
-	if base == "" {
-		base = apiDomain
-	}
 	if base == "" {
 		scheme := "http"
 		if r.TLS != nil || (s.cfg.TrustProxy && r.Header.Get("X-Forwarded-Proto") == "https") {
@@ -162,16 +173,39 @@ func (s *Server) handleOIDCAuth(w http.ResponseWriter, r *http.Request) {
 		uuid:        req.UUID,
 		device:      req.DeviceInfo,
 		expires:     time.Now().Add(10 * time.Minute),
+		requestIP:   s.clientIP(r),
 	}
-	s.oidcFlows.add(fl)
+	if len(fl.deviceID) > maxID || len(fl.uuid) > maxUUID {
+		writeError(w, http.StatusBadRequest, "Invalid request")
+		return
+	}
+	fl.device.Name, fl.device.OS, fl.device.Type = clip(fl.device.Name, 128), clip(fl.device.OS, 32), clip(fl.device.Type, 32)
+	if !s.oidcFlows.add(fl) {
+		writeError(w, http.StatusServiceUnavailable, "Too many pending logins, try again later")
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]string{
 		"code": fl.code,
 		"url":  oidc.AuthURL(d, p.ClientID, fl.redirectURI, p.Scopes, fl.state, fl.nonce, challenge),
 	})
 }
 
+// handleOIDCCallback receives the provider's redirect. It does not complete
+// the login right away: the browser user must confirm which device is being
+// signed in. Otherwise anyone could start a login for their own client, send
+// the provider link to a victim and receive the victim's session. The
+// authorization code only reaches the victim's browser, so the confirmation
+// cannot be forged from another site.
 func (s *Server) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
+	if r.Method == http.MethodPost {
+		r.Body = http.MaxBytesReader(w, r.Body, 16<<10)
+		if err := r.ParseForm(); err != nil {
+			oidcPage(w, http.StatusBadRequest, "Login failed", "Invalid request.")
+			return
+		}
+		q = r.PostForm
+	}
 	fl := s.oidcFlows.get(true, q.Get("state"))
 	if fl == nil {
 		oidcPage(w, http.StatusBadRequest, "Login session expired", "Start the login again from RustDesk.")
@@ -185,6 +219,10 @@ func (s *Server) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
 		msg := "Login was cancelled or denied by the provider (" + e + ")."
 		s.oidcFlows.finish(fl, 0, msg)
 		oidcPage(w, http.StatusBadRequest, "Login failed", msg)
+		return
+	}
+	if r.Method != http.MethodPost {
+		oidcConfirmPage(w, fl, q.Get("state"), q.Get("code"))
 		return
 	}
 	u, err := s.oidcResolveUser(r, fl, q.Get("code"))
@@ -222,15 +260,22 @@ func (s *Server) oidcResolveUser(r *http.Request, fl *oidcFlow, code string) (*s
 	}
 
 	u, err := s.store.OIDCUser(ctx, p.ID, cl.Subject)
-	if errors.Is(err, store.ErrNotFound) && cl.Email != "" && (cl.EmailVerified == nil || *cl.EmailVerified) {
-		// Link an existing account by verified email.
+	verified := cl.EmailVerified != nil && *cl.EmailVerified
+	if errors.Is(err, store.ErrNotFound) && cl.Email != "" && verified {
+		// Link an existing account by an email the provider vouches for.
+		// Administrators and TOTP-protected accounts are never linked
+		// automatically: a misconfigured provider must not open them.
 		if u, err = s.store.UserByEmail(ctx, cl.Email); err == nil {
+			if u.IsAdmin || u.TOTPEnabled {
+				return nil, errors.New("this account must be linked by an administrator; sign in with your password")
+			}
 			err = s.store.LinkOIDCUser(ctx, p.ID, cl.Subject, u.ID)
 		}
 	}
 	if errors.Is(err, store.ErrNotFound) && p.AutoCreate {
 		u, err = s.oidcCreateUser(r, cl)
 		if err == nil {
+			s.store.SetAuthSource(ctx, u.ID, "oidc")
 			err = s.store.LinkOIDCUser(ctx, p.ID, cl.Subject, u.ID)
 		}
 	}
@@ -262,7 +307,7 @@ func (s *Server) oidcCreateUser(r *http.Request, cl *oidc.Claims) (*store.User, 
 		base = "user"
 	}
 	email := ""
-	if cl.EmailVerified == nil || *cl.EmailVerified {
+	if cl.EmailVerified != nil && *cl.EmailVerified {
 		email = cl.Email
 	}
 	for i := 0; i < 20; i++ {
@@ -318,6 +363,27 @@ func (s *Server) handleOIDCQuery(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"type": "access_token", "access_token": tok, "user": toPayload(u)})
+}
+
+func oidcConfirmPage(w http.ResponseWriter, fl *oidcFlow, state, code string) {
+	device := fl.device.Name
+	if device == "" {
+		device = fl.deviceID
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'")
+	w.Header().Set("Referrer-Policy", "no-referrer")
+	fmt.Fprintf(w, `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>RuConnect</title><style>body{font-family:system-ui,sans-serif;display:grid;place-items:center;min-height:90vh;margin:0 16px;
+background:#f6f7f9;color:#1d2330}@media(prefers-color-scheme:dark){body{background:#14171c;color:#e6e8ec}}
+main{max-width:440px;text-align:center}h1{font-size:1.4rem}dl{text-align:left;display:grid;grid-template-columns:auto 1fr;gap:4px 12px}
+dt{opacity:.7}button{font:inherit;padding:10px 22px;border-radius:8px;border:0;background:#2563eb;color:#fff;cursor:pointer}</style></head>
+<body><main><h1>Sign in to RustDesk?</h1><p>Only continue if you started this login yourself on this device:</p>
+<dl><dt>Device</dt><dd>%s</dd><dt>System</dt><dd>%s</dd><dt>RustDesk ID</dt><dd>%s</dd><dt>Requested from</dt><dd>%s</dd></dl>
+<form method="post"><input type="hidden" name="state" value="%s"><input type="hidden" name="code" value="%s">
+<button type="submit">Yes, sign in this device</button></form></main></body></html>`,
+		html.EscapeString(device), html.EscapeString(fl.device.OS), html.EscapeString(fl.deviceID), html.EscapeString(fl.requestIP),
+		html.EscapeString(state), html.EscapeString(code))
 }
 
 func oidcPage(w http.ResponseWriter, status int, title, msg string) {

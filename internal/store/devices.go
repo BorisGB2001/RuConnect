@@ -71,16 +71,39 @@ type SysInfo struct {
 	ID, UUID, Hostname, Username, OS, CPU, Memory, Version, IP string
 }
 
-// UpsertSysInfo records a device's system information, creating the device if needed.
-func (s *Store) UpsertSysInfo(ctx context.Context, si SysInfo) error {
+// UpsertSysInfo records a device's system information, creating the device
+// if needed (created reports that). Devices are bound to the uuid they first
+// reported (trust on first use): a report for a known id with another uuid
+// returns ErrConflict, so nobody can take over a device record. An
+// administrator can delete the device to let a new machine claim the id.
+func (s *Store) UpsertSysInfo(ctx context.Context, si SysInfo) (created bool, err error) {
 	t := now()
-	_, err := s.db.ExecContext(ctx, `INSERT INTO devices (id, guid, uuid, hostname, username, os, cpu, memory, version, ip, last_online_at, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT(id) DO UPDATE SET uuid = excluded.uuid, hostname = excluded.hostname, username = excluded.username,
-			os = excluded.os, cpu = excluded.cpu, memory = excluded.memory, version = excluded.version, ip = excluded.ip,
-			last_online_at = excluded.last_online_at, updated_at = excluded.updated_at`,
+	res, err := s.db.ExecContext(ctx, `INSERT INTO devices (id, guid, uuid, hostname, username, os, cpu, memory, version, ip, last_online_at, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO NOTHING`,
 		si.ID, NewGUID(), si.UUID, si.Hostname, si.Username, si.OS, si.CPU, si.Memory, si.Version, si.IP, t, t, t)
-	return err
+	if err != nil {
+		return false, err
+	}
+	if n, _ := res.RowsAffected(); n > 0 {
+		return true, nil
+	}
+	res, err = s.db.ExecContext(ctx, `UPDATE devices SET uuid = ?, hostname = ?, username = ?, os = ?, cpu = ?, memory = ?,
+		version = ?, ip = ?, last_online_at = ?, updated_at = ? WHERE id = ? AND (uuid = ? OR uuid = '')`,
+		si.UUID, si.Hostname, si.Username, si.OS, si.CPU, si.Memory, si.Version, si.IP, t, t, si.ID, si.UUID)
+	if err != nil {
+		return false, err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return false, ErrConflict
+	}
+	return false, nil
+}
+
+// DeviceMatches reports whether a device with this id and uuid is registered.
+func (s *Store) DeviceMatches(ctx context.Context, id, uuid string) (bool, error) {
+	var n int
+	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM devices WHERE id = ? AND uuid = ? AND uuid != ''`, id, uuid).Scan(&n)
+	return n > 0, err
 }
 
 // Heartbeat marks a device online. It reports false when the device is unknown
@@ -209,10 +232,12 @@ func (s *Store) UpdateDevice(ctx context.Context, id string, up DeviceUpdate) er
 	return nil
 }
 
-// AssignDeviceUserIfUnset binds a device to a user unless it already has an owner.
-func (s *Store) AssignDeviceUserIfUnset(ctx context.Context, deviceID string, userID int64) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE devices SET user_id = ?, updated_at = ? WHERE id = ? AND user_id IS NULL`,
-		userID, now(), deviceID)
+// AssignDeviceUserIfUnset binds a device to a user unless it already has an
+// owner. uuid must match the device's registered uuid, so a client cannot
+// claim somebody else's device by sending its id.
+func (s *Store) AssignDeviceUserIfUnset(ctx context.Context, deviceID, uuid string, userID int64) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE devices SET user_id = ?, updated_at = ? WHERE id = ? AND uuid = ? AND uuid != ''
+		AND user_id IS NULL`, userID, now(), deviceID, uuid)
 	return err
 }
 

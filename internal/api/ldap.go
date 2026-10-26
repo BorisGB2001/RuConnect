@@ -25,7 +25,7 @@ func (s *Server) ldapConfig() ldapauth.Config {
 // taken over by a directory entry with the same name.
 func (s *Server) ldapLogin(r *http.Request, local *store.User, username, password string) *store.User {
 	cfg := s.ldapConfig()
-	if !cfg.Enabled() || (local != nil && local.PasswordHash != "") {
+	if !cfg.Enabled() || (local != nil && !s.ldapMayUse(r, local)) {
 		return nil
 	}
 	id, err := ldapauth.Authenticate(cfg, username, password)
@@ -48,8 +48,8 @@ func (s *Server) ldapLogin(r *http.Request, local *store.User, username, passwor
 		if err == nil {
 			s.log.Info("user created from LDAP", "user", id.Name, "dn", id.DN)
 		}
-	case err == nil && u.PasswordHash != "":
-		s.log.Warn("ldap login refused: a local account with this name has a password", "user", u.Name)
+	case err == nil && !s.ldapMayUse(r, u):
+		s.log.Warn("ldap login refused: a local or OIDC account with this name exists", "user", u.Name)
 		return nil
 	case err == nil:
 		if s.cfg.LDAP.AdminGroupDN == "" {
@@ -62,5 +62,28 @@ func (s *Server) ldapLogin(r *http.Request, local *store.User, username, passwor
 		s.log.Error("ldap user sync", "user", id.Name, "err", err)
 		return nil
 	}
+	if err := s.store.SetAuthSource(ctx, u.ID, "ldap"); err != nil {
+		s.log.Error("ldap user sync", "user", id.Name, "err", err)
+		return nil
+	}
 	return u
+}
+
+// ldapMayUse reports whether a directory login may sign in as the existing
+// account u: accounts created by LDAP, or ones an administrator created
+// without a password for LDAP use. Accounts with a local password or an
+// OIDC identity are never taken over by a directory entry of the same name.
+func (s *Server) ldapMayUse(r *http.Request, u *store.User) bool {
+	src, err := s.store.AuthSource(r.Context(), u.ID)
+	if err != nil {
+		return false
+	}
+	if src == "ldap" {
+		return true
+	}
+	if src != "" || u.PasswordHash != "" {
+		return false
+	}
+	linked, err := s.store.HasOIDCIdentity(r.Context(), u.ID)
+	return err == nil && !linked
 }

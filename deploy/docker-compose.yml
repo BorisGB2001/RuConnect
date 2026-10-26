@@ -4,10 +4,14 @@
 #   docker compose up -d
 #   docker compose logs ruconnect   # first start prints the generated admin password
 #
-# Ports (host network): 21114 API + panel, 21115-21117 and 21118-21119 RustDesk.
+# HTTPS (recommended when the panel is reachable from the internet):
+#   set RUCONNECT_DOMAIN, RUCONNECT_LISTEN=127.0.0.1:21114 and RUCONNECT_TRUST_PROXY=true in .env, then
+#   docker compose --profile https up -d
+#
+# Ports (host network): 21114 API + panel (or 80/443 with HTTPS), 21115-21117 and 21118-21119 RustDesk.
 services:
   hbbs:
-    image: rustdesk/rustdesk-server:latest
+    image: rustdesk/rustdesk-server:1.1.16
     container_name: ruconnect-hbbs
     command: hbbs
     network_mode: host # 21115/tcp, 21116/tcp+udp, 21118/tcp
@@ -18,7 +22,7 @@ services:
     restart: unless-stopped
 
   hbbr:
-    image: rustdesk/rustdesk-server:latest
+    image: rustdesk/rustdesk-server:1.1.16
     container_name: ruconnect-hbbr
     command: hbbr
     network_mode: host # 21117/tcp, 21119/tcp
@@ -36,10 +40,27 @@ services:
         required: false
     volumes:
       - ruconnect-data:/data
-      - ./data:/hbbs:ro # hbbs public key (id_ed25519.pub), shown in the panel
+      # hbbs writes its key pair here; only the public key is read (shown in the panel).
+      - ./data:/hbbs:ro
     depends_on:
       - hbbs
     restart: unless-stopped
 
+  # Optional TLS front end with automatic Let's Encrypt certificates.
+  caddy:
+    image: caddy:2.11.7
+    profiles: [https]
+    container_name: ruconnect-caddy
+    network_mode: host # 80/tcp, 443/tcp
+    environment:
+      RUCONNECT_DOMAIN: ${RUCONNECT_DOMAIN:-}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+    depends_on:
+      - ruconnect
+    restart: unless-stopped
+
 volumes:
   ruconnect-data:
+  caddy-data:

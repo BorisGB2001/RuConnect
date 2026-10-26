@@ -301,7 +301,7 @@ func (s *Server) handleLegacyABSet(w http.ResponseWriter, r *http.Request, u *st
 	var req struct {
 		Data string `json:"data"`
 	}
-	if err := readJSON(r, &req); err != nil || !json.Valid([]byte(req.Data)) {
+	if err := readJSONLimit(r, &req, maxLargeBody); err != nil || !json.Valid([]byte(req.Data)) {
 		writeError(w, http.StatusBadRequest, "Invalid request")
 		return
 	}

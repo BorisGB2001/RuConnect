@@ -311,10 +311,20 @@ func (s *Store) CountABPeers(ctx context.Context, abID int64) (int, error) {
 	return n, err
 }
 
+// MaxABPeers caps the size of one address book.
+const MaxABPeers = 10000
+
 // AddABPeer inserts a peer, or replaces the fields of an existing one.
 func (s *Store) AddABPeer(ctx context.Context, abID int64, p *ABPeer) error {
 	if strings.TrimSpace(p.ID) == "" {
 		return errors.New("peer id is required")
+	}
+	if n, err := s.CountABPeers(ctx, abID); err != nil {
+		return err
+	} else if n >= MaxABPeers {
+		if exists, _ := s.HasABPeer(ctx, abID, strings.TrimSpace(p.ID)); !exists {
+			return ErrFull
+		}
 	}
 	if p.Tags == nil {
 		p.Tags = []string{}

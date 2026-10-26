@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/ruconnect/ruconnect/internal/store"
@@ -24,7 +25,20 @@ func csvTime(ts int64) string {
 	return time.Unix(ts, 0).UTC().Format(time.RFC3339)
 }
 
+// csvSafe neutralizes cells that spreadsheet apps would run as formulas;
+// device-reported fields (peer names, paths) are attacker-controlled.
+func csvSafe(row []string) []string {
+	for i, c := range row {
+		if c != "" && strings.ContainsRune("=+-@\t\r", rune(c[0])) {
+			row[i] = "'" + c
+		}
+	}
+	return row
+}
+
 func startCSV(w http.ResponseWriter, name string, header []string) *csv.Writer {
+	// Large exports may take longer than the server's write timeout.
+	http.NewResponseController(w).SetWriteDeadline(time.Now().Add(15 * time.Minute))
 	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
 	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="ruconnect-%s-%s.csv"`, name, time.Now().UTC().Format("20060102-150405")))
 	w.Write([]byte("\xEF\xBB\xBF")) // BOM, so spreadsheet apps detect UTF-8
@@ -41,7 +55,7 @@ func exportAll[T any](r *http.Request, list func(store.Page) ([]T, int, error), 
 			return err
 		}
 		for _, it := range items {
-			if err := cw.Write(row(it)); err != nil {
+			if err := cw.Write(csvSafe(row(it))); err != nil {
 				return err
 			}
 		}
