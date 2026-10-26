@@ -156,7 +156,13 @@ func (s *Server) middleware(next http.Handler) http.Handler {
 			}
 			// Heartbeats arrive every few seconds per device; keep them out of the info log.
 			level := slog.LevelInfo
-			if r.URL.Path == "/api/heartbeat" || r.URL.Path == "/healthz" || !strings.HasPrefix(r.URL.Path, "/api/") {
+			p := r.URL.Path
+			if rest, ok := strings.CutPrefix(p, "/s/"); ok { // site prefix
+				if i := strings.IndexByte(rest, '/'); i >= 0 {
+					p = rest[i:]
+				}
+			}
+			if p == "/api/heartbeat" || p == "/healthz" || !strings.HasPrefix(p, "/api/") {
 				level = slog.LevelDebug
 			}
 			s.log.Log(r.Context(), level, "http", "method", r.Method, "path", r.URL.Path, "status", sw.status,
