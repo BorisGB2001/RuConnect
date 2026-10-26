@@ -1,0 +1,7 @@
+/deploy/data/
+/deploy/ruconnect/
+/bin/
+/dist/
+node_modules/
+*.db
+.env
