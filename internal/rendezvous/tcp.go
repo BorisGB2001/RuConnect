@@ -76,7 +76,7 @@ func (s *Server) ServeTCP(ctx context.Context, ln net.Listener) error {
 // ServeAux handles the port below the rendezvous port: NAT type tests and
 // online status queries.
 func (s *Server) ServeAux(ctx context.Context, ln net.Listener) error {
-	return serveListener(ctx, ln, func(c net.Conn) { s.handleAux(c) })
+	return serveListener(ctx, ln, func(c net.Conn) { s.handleAux(ctx, c) })
 }
 
 func serveListener(ctx context.Context, ln net.Listener, handle func(net.Conn)) error {
@@ -455,7 +455,7 @@ func (s *Server) localAddr(ctx context.Context, la *pb.LocalAddr, from netip.Add
 
 // Aux port: NAT tests and online queries, one request per connection.
 
-func (s *Server) handleAux(c net.Conn) {
+func (s *Server) handleAux(ctx context.Context, c net.Conn) {
 	defer c.Close()
 	r := bufio.NewReader(c)
 	c.SetReadDeadline(time.Now().Add(idleTimeout))
@@ -477,14 +477,8 @@ func (s *Server) handleAux(c net.Conn) {
 		if len(peers) > 10000 {
 			peers = peers[:10000]
 		}
-		states := make([]byte, (len(peers)+7)/8)
-		for i, id := range peers {
-			if s.IsOnline(id) {
-				states[i/8] |= 1 << (7 - i%8)
-			}
-		}
 		out = &pb.RendezvousMessage{Union: &pb.RendezvousMessage_OnlineResponse{
-			OnlineResponse: &pb.OnlineResponse{States: states}}}
+			OnlineResponse: &pb.OnlineResponse{States: s.onlineStates(ctx, peers)}}}
 	default:
 		return
 	}

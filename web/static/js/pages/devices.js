@@ -1,7 +1,8 @@
 import { t } from '../i18n.js';
-import { api, enc, listAll } from '../api.js';
+import { api, enc, listAll, can } from '../api.js';
 import { setParams, navigate } from '../router.js';
 import { strategyOptions } from './strategies.js';
+import { moveToOrgDialog, orgColumn } from './organizations.js';
 import {
   h, clear, pageHeader, iconButton, dataTable, searchInput, selectInput, formDialog, confirmDialog,
   badge, dot, timeCell, toast, toastError, kv, fmtDate, dash,
@@ -31,6 +32,7 @@ export default {
         { label: t('devices.id'), render: (d) => h('div', { class: 'cell-id' }, dot(d.online), h('code', { class: 'mono', text: d.id }), d.conns > 0 && badge(t('devices.sessions', { n: d.conns }), 'accent')) },
         { label: t('devices.host'), render: (d) => h('div', { class: 'cell-main' }, h('strong', { text: d.hostname || '—' }), d.username && h('div', { class: 'muted small', text: d.username })) },
         { label: t('devices.os'), class: 'col-os', render: (d) => dash(d.os) },
+        orgColumn(),
         { label: t('devices.user'), key: 'user_name' },
         { label: t('devices.group'), key: 'group_name' },
         { label: t('devices.server'), class: 'col-server', render: (d) => dash(d.server_name || d.server_slug) },
@@ -38,12 +40,17 @@ export default {
         { label: t('devices.version'), key: 'version' },
         { label: t('strategies.strategy'), key: 'strategy_name' },
         { label: t('devices.lastSeen'), render: (d) => (d.online ? badge(t('common.online'), 'ok') : timeCell(d.last_online_at, true)) },
-      ],
+      ].filter(Boolean),
       perm: 'operate',
       actions: (d) => [
         iconButton('edit', t('common.edit'), () => edit(d)),
         iconButton('history', t('devices.audit'), () => navigate(['audit', 'conns'], { device_id: d.id })),
         iconButton('unplug', t('devices.disconnect'), () => disconnect(d)),
+        can('server') && iconButton('list', t('org.move'), () => moveToOrgDialog({
+          name: d.id, current: d.org_guid, hint: t('org.moveDeviceHint'),
+          save: (org) => api.put('/api/admin/devices/' + enc(d.id) + '/organization', { org_guid: org }),
+          done: () => table.reload(),
+        })),
         iconButton('trash', t('common.delete'), () => remove(d), 'ghost-danger'),
       ],
     });
@@ -78,6 +85,7 @@ export default {
           [t('devices.memory'), d.memory],
           [t('devices.version'), d.version],
           [t('devices.ip'), d.ip],
+          d.org_name && [t('org.organization'), d.org_name],
           d.server_name && [t('devices.server'), d.server_name],
           [t('devices.uuid'), d.uuid && h('code', { class: 'mono small break', text: d.uuid })],
           [t('devices.lastSeen'), d.online ? t('common.online') : fmtDate(d.last_online_at)],

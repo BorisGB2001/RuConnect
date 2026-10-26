@@ -28,7 +28,11 @@ type Server struct {
 	// Authorize, when set, vets each connection request; a non-empty result
 	// refuses it and is shown to the user.
 	Authorize func(ctx context.Context, r Request) string
-	Log       *slog.Logger
+	// LocalHost reports whether a host name (from "ID@host" peer ids) is
+	// this server; RemoteHost whether it is another server we may query
+	// for online status. Both receive the host without port.
+	LocalHost, RemoteHost func(host string) bool
+	Log                   *slog.Logger
 
 	keyStr string
 	peers  *peerMap
@@ -38,7 +42,8 @@ type Server struct {
 	waiters map[netip.AddrPort]*tcpSession // controllers waiting for a reply, by their TCP address
 	relayRR uint64
 
-	limiter *ipLimiter
+	limiter  *ipLimiter
+	fedCache onlineCache
 }
 
 // Request describes a connection request for Authorize.

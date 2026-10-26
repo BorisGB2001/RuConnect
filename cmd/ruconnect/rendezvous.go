@@ -6,8 +6,11 @@ import (
 	"io"
 	"log/slog"
 	"net"
+	"net/url"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/BorisGB2001/RuConnect/internal/config"
 	"github.com/BorisGB2001/RuConnect/internal/rendezvous"
@@ -29,6 +32,8 @@ func startRendezvous(ctx context.Context, cfg config.Config, st *store.Store, lo
 	rs.Authorize = func(ctx context.Context, req rendezvous.Request) string {
 		return authorizeConnection(ctx, st, req)
 	}
+	hosts := &serverHosts{cfg: cfg, st: st}
+	rs.LocalHost, rs.RemoteHost = hosts.local, hosts.remote
 	rs.RelayServers = relayServers(cfg)
 	if rc.RelayEnabled {
 		rs.RelayPort = rc.RelayPort
@@ -136,4 +141,76 @@ func authorizeConnection(ctx context.Context, st *store.Store, req rendezvous.Re
 		return ""
 	}
 	return "Access denied: this device belongs to another organization"
+}
+
+// serverHosts classifies host names in "ID@host" peer ids for online status:
+// this server (its configured names, the default site and organization
+// domains) or another server an administrator added as a site. The lists
+// are re-read at most every 30 seconds.
+type serverHosts struct {
+	cfg config.Config
+	st  *store.Store
+
+	mu            sync.Mutex
+	loaded        time.Time
+	locals, peers map[string]bool
+}
+
+func hostOf(s string) string {
+	if u, err := url.Parse(s); err == nil && u.Host != "" {
+		return strings.ToLower(u.Hostname())
+	}
+	if h, _, err := net.SplitHostPort(s); err == nil {
+		s = h
+	}
+	return strings.ToLower(strings.Trim(strings.TrimSpace(s), "[]"))
+}
+
+func (h *serverHosts) refresh() {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if time.Since(h.loaded) < 30*time.Second {
+		return
+	}
+	ctx := context.Background()
+	locals, peers := map[string]bool{}, map[string]bool{}
+	for _, s := range []string{h.cfg.IDServer, h.cfg.APIServer, h.cfg.Domain} {
+		if s != "" {
+			locals[hostOf(s)] = true
+		}
+	}
+	if orgs, err := h.st.ListOrganizations(ctx); err == nil {
+		for _, o := range orgs {
+			for _, d := range o.Domains {
+				locals[d] = true
+			}
+		}
+	}
+	if sites, err := h.st.ListServers(ctx); err == nil {
+		for _, s := range sites {
+			if s.IDServer == "" {
+				continue
+			}
+			if s.IsDefault {
+				locals[hostOf(s.IDServer)] = true
+			} else {
+				peers[hostOf(s.IDServer)] = true
+			}
+		}
+	}
+	h.locals, h.peers, h.loaded = locals, peers, time.Now()
+}
+
+func (h *serverHosts) local(host string) bool {
+	h.refresh()
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.locals[host]
+}
+
+func (h *serverHosts) remote(host string) bool {
+	h.refresh()
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.peers[host] && !h.locals[host]
 }

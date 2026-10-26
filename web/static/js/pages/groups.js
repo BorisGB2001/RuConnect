@@ -2,6 +2,7 @@ import { t } from '../i18n.js';
 import { api, enc } from '../api.js';
 import { buildHash } from '../router.js';
 import { strategyOptions } from './strategies.js';
+import { createInOrgIntro } from './organizations.js';
 import { h, clear, pageHeader, button, iconButton, dataTable, formDialog, confirmDialog, timeCell, toast, toastError } from '../ui.js';
 
 const fields = (g = {}, strategies, stratGuid) => [
@@ -29,9 +30,9 @@ export default {
       ],
     });
     const body = (v) => ({ name: v.name.trim(), note: v.note });
-    function create() {
+    async function create() {
       formDialog({
-        title: t('groups.create'), fields: fields().filter(Boolean), submitLabel: t('common.create'),
+        title: t('groups.create'), fields: fields().filter(Boolean), submitLabel: t('common.create'), intro: await createInOrgIntro(),
         onSubmit: async (v) => { await api.post('/api/admin/groups', body(v)); toast(t('groups.created'), 'ok'); table.reload(); },
       });
     }

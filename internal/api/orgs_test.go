@@ -2,6 +2,7 @@ package api_test
 
 import (
 	"net/http"
+	"strings"
 	"testing"
 )
 
@@ -272,5 +273,21 @@ func TestTLSAsk(t *testing.T) {
 	}
 	if r := e.get("/tls/ask?domain=evil.example", ""); r.Status != http.StatusNotFound {
 		t.Fatalf("unknown domain: %s", r)
+	}
+}
+
+func TestOrgDeployConfig(t *testing.T) {
+	e := newOrgEnv(t)
+	r := e.get("/api/admin/deploy-config", e.adminA).obj(t)
+	if r["id_server"] != "rd.alpha.example" || !strings.Contains(r["api_server"].(string), "rd.alpha.example") {
+		t.Fatalf("alpha deploy config: %v", r)
+	}
+	if r := e.get("/api/admin/deploy-config?org="+e.orgB, e.admin).obj(t); r["id_server"] != "rd.beta.example" {
+		t.Fatalf("server admin, beta selected: %v", r)
+	}
+	e.post("/api/admin/groups", e.adminA, map[string]any{"name": "Office"})
+	_, groups := listData(t, e.get("/api/admin/groups", e.admin))
+	if len(groups) != 1 || groups[0]["org_name"] != "Alpha" {
+		t.Fatalf("groups carry their organization: %v", groups)
 	}
 }

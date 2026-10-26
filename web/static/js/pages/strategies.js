@@ -4,6 +4,7 @@ import {
   h, clear, pageHeader, button, iconButton, dataTable, formDialog, confirmDialog, badge, timeCell,
   toast, toastError, notice,
 } from '../ui.js';
+import { createInOrgIntro } from './organizations.js';
 
 const YN = ['Y', 'N'];
 // Common client option keys. Values: list of allowed values (shown as suggestions).
@@ -104,11 +105,12 @@ export default {
       ],
     });
 
-    function open(s) {
+    async function open(s) {
+      const intro = s ? null : await createInOrgIntro();
       const ed = optionsEditor(s && s.options);
       formDialog({
         title: s ? t('strategies.edit', { name: s.name }) : t('strategies.create'), wide: true,
-        submitLabel: s ? t('common.save') : t('common.create'),
+        submitLabel: s ? t('common.save') : t('common.create'), intro,
         fields: [
           { name: 'name', label: t('strategies.name'), required: true, value: s && s.name },
           { name: 'is_default', label: t('strategies.isDefault'), type: 'checkbox', value: s && s.is_default, hint: t('strategies.isDefaultHint') },

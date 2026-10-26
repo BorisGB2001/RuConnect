@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"net"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -306,5 +307,53 @@ func TestAuthorizeRefuses(t *testing.T) {
 		Id: "444555666", Uuid: "u", Token: "outsider"}}})
 	if r := c.recv().GetRelayResponse(); r.GetRefuseReason() != "Access denied" {
 		t.Fatalf("relay: %v", r)
+	}
+}
+
+func onlineQuery(t *testing.T, aux string, peers ...string) []byte {
+	t.Helper()
+	c, err := net.Dial("tcp", aux)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	writeFrame(c, marshal(&pb.RendezvousMessage{Union: &pb.RendezvousMessage_OnlineRequest{OnlineRequest: &pb.OnlineRequest{Peers: peers}}}))
+	c.SetReadDeadline(time.Now().Add(5 * time.Second))
+	b, err := readFrame(bufio.NewReader(c), MaxFrame)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m pb.RendezvousMessage
+	proto.Unmarshal(b, &m)
+	return m.GetOnlineResponse().GetStates()
+}
+
+func TestFederatedOnline(t *testing.T) {
+	other := startServer(t)
+	registerUDP(t, other, "700000007")
+	_, otherPort, _ := net.SplitHostPort(other.aux)
+	n, _ := strconv.Atoi(otherPort)
+	otherHost := "127.0.0.1:" + strconv.Itoa(n+1) // its ID port; online queries go to port-1
+
+	home := startServer(t)
+	registerUDP(t, home, "100000001")
+	home.srv.LocalHost = func(h string) bool { return h == "home.example" }
+	home.srv.RemoteHost = func(h string) bool { return h == "127.0.0.1" }
+
+	got := onlineQuery(t, home.aux,
+		"100000001",                          // local, online
+		"100000001@home.example?key=x",       // local through its own name
+		"700000007@"+otherHost+"?key=abc",    // remote, online
+		"700000008@"+otherHost+"?key=abc",    // remote, offline
+		"700000007@evil.example:21116?key=x", // not an allowed server
+	)
+	if len(got) != 1 || got[0] != 0b1110_0000 {
+		t.Fatalf("states %08b", got)
+	}
+	// A dead remote server makes its peers offline without stalling the reply.
+	start := time.Now()
+	got = onlineQuery(t, home.aux, "100000001", "1@127.0.0.1:1?key=x")
+	if got[0] != 0b1000_0000 || time.Since(start) > 2*time.Second {
+		t.Fatalf("dead server: %08b after %s", got, time.Since(start))
 	}
 }

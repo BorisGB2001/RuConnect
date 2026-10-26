@@ -1,7 +1,8 @@
 import { t } from '../i18n.js';
-import { api } from '../api.js';
+import { api, can } from '../api.js';
 import { setParams } from '../router.js';
 import { h, clear, append, pageHeader, card, copyField, kv, notice, icon, toastError, selectInput } from '../ui.js';
+import { domainTags } from './organizations.js';
 
 function stat(label, value, iconName, href, sub) {
   return h('a', { class: 'stat card', href },
@@ -17,9 +18,10 @@ const withHint = (node, hint) => h('div', { class: 'with-hint' }, node, h('div',
 export default {
   render(el, route) {
     const stats = h('div', { class: 'stats' });
+    const orgBox = h('div');
     const setup = h('div');
     const footer = h('div');
-    clear(el).append(pageHeader(t('dash.title'), t('dash.subtitle')), stats, setup, footer);
+    clear(el).append(pageHeader(t('dash.title'), t('dash.subtitle')), stats, orgBox, setup, footer);
     stats.append(stat(t('dash.devices'), null, 'devices', '#/devices'), stat(t('dash.online'), null, 'dashboard', '#/devices?online=1'), stat(t('dash.users'), null, 'users', '#/users'));
 
     let overview = null;
@@ -47,6 +49,8 @@ export default {
     }
 
     async function loadConfig() {
+      // Organization staff connect through their organization's domain, which the overview already resolved.
+      if (overview && overview.organization) { renderValues(overview.server || {}); return; }
       try {
         const c = await api.get('/api/admin/deploy-config', { server: slug });
         renderValues(c);
@@ -76,11 +80,17 @@ export default {
         stat(t('dash.devices'), o.devices, 'devices', '#/devices'),
         stat(t('dash.online'), o.devices_online, 'dashboard', '#/devices?online=1', t('dash.onlinePct', { pct })),
         stat(t('dash.users'), o.users, 'users', '#/users'));
+      const org = o.organization;
+      if (org) {
+        clear(orgBox).append(card(t('org.dashTitle', { name: org.name }),
+          (org.domains || []).length ? kv([[t('org.dashDomains'), domainTags(org.domains)]]) : notice(t('org.dashNoDomains'), 'warn'),
+          org.note && h('p', { class: 'muted', text: org.note })));
+      }
       clear(footer).append(h('p', { class: 'muted version', text: t('dash.version', { v: o.version || '?' }) }));
       loadConfig();
     }).catch((err) => { if (!err.handled) toastError(err); clear(body).append(notice(err.message, 'error')); });
 
-    api.get('/api/admin/servers', { pageSize: 1000 }).then((r) => {
+    if (can('server')) api.get('/api/admin/servers', { pageSize: 1000 }).then((r) => {
       servers = (r && r.data) || [];
       if (slug && !servers.some((s) => s.slug === slug)) { slug = ''; setParams({}); }
       renderPicker();

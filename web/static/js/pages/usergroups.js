@@ -4,6 +4,7 @@ import {
   h, pageHeader, button, iconButton, dataTable, formDialog, confirmDialog, badge, timeCell,
   toast, toastError, notice, clear, dash,
 } from '../ui.js';
+import { createInOrgIntro } from './organizations.js';
 
 // Shared by the user dialog: options for the user-group select.
 export async function userGroupOptions() {
@@ -58,7 +59,7 @@ export default {
       const picker = deviceGroupPicker(deviceGroups, g && g.device_groups);
       formDialog({
         title: g ? t('ugroups.edit', { name: g.name }) : t('ugroups.create'),
-        submitLabel: g ? t('common.save') : t('common.create'),
+        submitLabel: g ? t('common.save') : t('common.create'), intro: g ? null : await createInOrgIntro(),
         fields: [
           { name: 'name', label: t('ugroups.name'), required: true, value: g && g.name, full: true },
           { name: 'note', label: t('common.note'), type: 'textarea', value: g && g.note, full: true, rows: 2 },

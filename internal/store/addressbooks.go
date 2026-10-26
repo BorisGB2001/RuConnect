@@ -29,18 +29,20 @@ type AddressBook struct {
 	Peers     int    `json:"peers"`
 	CreatedAt int64  `json:"created_at"`
 	OrgID     int64  `json:"-"`
+	OrgGUID   string `json:"org_guid"`
+	OrgName   string `json:"org_name"`
 	// Rule is the effective rule of the user the book was loaded for.
 	Rule int `json:"rule"`
 }
 
 const abSelect = `SELECT a.id, a.guid, a.name, a.owner_id, COALESCE(u.name, ''), COALESCE(u.guid, ''), a.personal, a.note, a.password,
-	(SELECT COUNT(*) FROM ab_peers p WHERE p.ab_id = a.id), a.created_at, IFNULL(a.org_id, 0)
+	(SELECT COUNT(*) FROM ab_peers p WHERE p.ab_id = a.id), a.created_at, IFNULL(a.org_id, 0), COALESCE((SELECT o.guid FROM organizations o WHERE o.id = a.org_id), ''), COALESCE((SELECT o.name FROM organizations o WHERE o.id = a.org_id), '')
 	FROM address_books a LEFT JOIN users u ON u.id = a.owner_id`
 
 func scanAB(row interface{ Scan(...any) error }) (*AddressBook, error) {
 	var a AddressBook
 	var personal int
-	err := row.Scan(&a.ID, &a.GUID, &a.Name, &a.OwnerID, &a.Owner, &a.OwnerGUID, &personal, &a.Note, &a.Password, &a.Peers, &a.CreatedAt, &a.OrgID)
+	err := row.Scan(&a.ID, &a.GUID, &a.Name, &a.OwnerID, &a.Owner, &a.OwnerGUID, &personal, &a.Note, &a.Password, &a.Peers, &a.CreatedAt, &a.OrgID, &a.OrgGUID, &a.OrgName)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}

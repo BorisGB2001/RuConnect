@@ -24,6 +24,8 @@ type Strategy struct {
 	Devices    int               `json:"devices"`
 	Groups     int               `json:"groups"`
 	OrgID      int64             `json:"-"`
+	OrgGUID    string            `json:"org_guid"`
+	OrgName    string            `json:"org_name"`
 }
 
 type StrategyInput struct {
@@ -36,13 +38,13 @@ type StrategyInput struct {
 
 const strategySelect = `SELECT s.id, s.guid, s.name, s.note, s.options, s.is_default, s.modified_at, s.created_at,
 	(SELECT COUNT(*) FROM devices d WHERE d.strategy_id = s.id),
-	(SELECT COUNT(*) FROM device_groups g WHERE g.strategy_id = s.id), IFNULL(s.org_id, 0) FROM strategies s`
+	(SELECT COUNT(*) FROM device_groups g WHERE g.strategy_id = s.id), IFNULL(s.org_id, 0), COALESCE((SELECT o.guid FROM organizations o WHERE o.id = s.org_id), ''), COALESCE((SELECT o.name FROM organizations o WHERE o.id = s.org_id), '') FROM strategies s`
 
 func scanStrategy(row interface{ Scan(...any) error }) (*Strategy, error) {
 	var v Strategy
 	var opts string
 	var def int
-	err := row.Scan(&v.ID, &v.GUID, &v.Name, &v.Note, &opts, &def, &v.ModifiedAt, &v.CreatedAt, &v.Devices, &v.Groups, &v.OrgID)
+	err := row.Scan(&v.ID, &v.GUID, &v.Name, &v.Note, &opts, &def, &v.ModifiedAt, &v.CreatedAt, &v.Devices, &v.Groups, &v.OrgID, &v.OrgGUID, &v.OrgName)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}

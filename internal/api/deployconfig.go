@@ -42,6 +42,16 @@ func (s *Server) adminDeployConfig(w http.ResponseWriter, r *http.Request, u *st
 	if !v.IsDefault {
 		api += "/s/" + v.Slug
 	}
+	// Clients of an organization use its domain for the ID and API servers.
+	org, ok := s.listOrg(w, r, u)
+	if !ok {
+		return
+	}
+	if v.IsDefault && org > 0 {
+		if o, err := s.store.OrganizationByID(r.Context(), org); err == nil && len(o.Domains) > 0 {
+			host, api = o.Domains[0], s.orgAPIServer(r, o.Domains[0])
+		}
+	}
 	cfg := clientConfigString(host, relay, api, key)
 	out := map[string]any{
 		"server":        v.Slug,

@@ -1,7 +1,9 @@
 // RuConnect admin panel: shell, hash router and login flow.
 import { t, lang, setLang, LANGS, onLangChange } from './i18n.js';
 import { h, clear, closeAllModals, icon, button, iconButton, toast, toastError, formField, storageGet, storageSet } from './ui.js';
-import { login, loginCode, logout, getToken, getUser, setSession, onUnauthorized, can, userLevel } from './api.js';
+import {
+  login, loginCode, logout, getToken, getUser, setSession, onUnauthorized, can, userLevel, orgList, orgFilter, setOrgFilter,
+} from './api.js';
 import { parseHash, navigate } from './router.js';
 
 import dashboard from './pages/dashboard.js';
@@ -15,6 +17,7 @@ import settings from './pages/settings.js';
 import oidc from './pages/oidc.js';
 import strategies from './pages/strategies.js';
 import userGroups from './pages/usergroups.js';
+import organizations from './pages/organizations.js';
 
 const ROUTES = [
   { path: 'dashboard', label: 'nav.dashboard', icon: 'dashboard', page: dashboard },
@@ -25,8 +28,9 @@ const ROUTES = [
   { path: 'strategies', label: 'nav.strategies', icon: 'shield', page: strategies },
   { path: 'address-books', label: 'nav.addressBooks', icon: 'book', page: addressBooks },
   { path: 'audit', label: 'nav.audit', icon: 'audit', page: audit },
-  { path: 'servers', label: 'nav.servers', icon: 'servers', page: servers },
-  { path: 'oidc', label: 'nav.oidc', icon: 'key', page: oidc, perm: 'admin' },
+  { path: 'organizations', label: 'nav.organizations', icon: 'list', page: organizations, perm: 'server' },
+  { path: 'servers', label: 'nav.servers', icon: 'servers', page: servers, perm: 'server' },
+  { path: 'oidc', label: 'nav.oidc', icon: 'key', page: oidc, perm: 'server' },
   { path: 'settings', label: 'nav.settings', icon: 'settings', page: settings },
 ];
 
@@ -57,6 +61,31 @@ function langSelect() {
   return s;
 }
 
+// Organization selector (server administrators) or the user's own organization (organization staff).
+const orgSlot = h('span', { class: 'org-slot' });
+async function renderOrg() {
+  const user = getUser() || {};
+  if (user.org_guid) {
+    clear(orgSlot).append(h('span', { class: 'org-chip', title: t('org.yours') }, icon('list'), h('span', { text: user.org_name || '' })));
+    return;
+  }
+  if (!can('server')) { clear(orgSlot); return; }
+  let orgs;
+  const before = orgFilter();
+  try { orgs = await orgList(); } catch (e) { if (!e.handled) console.warn(e); clear(orgSlot); return; }
+  if (!getToken()) return;
+  if (!orgs.length) setOrgFilter('');
+  if (orgFilter() !== before) { render(); return; } // the chosen organization no longer exists
+  if (!orgs.length) { clear(orgSlot); return; }
+  const s = h('select', { class: 'org-select', 'aria-label': t('org.filter'), title: t('org.filter') },
+    [{ value: '', label: t('org.all') }, { value: 'none', label: t('org.none') }, ...orgs.map((o) => ({ value: o.guid, label: o.name }))]
+      .map((o) => h('option', { value: o.value, text: o.label, selected: o.value === orgFilter() })));
+  s.addEventListener('change', () => { setOrgFilter(s.value); render(); });
+  clear(orgSlot).append(s);
+}
+// Pages call this after creating, renaming or deleting organizations.
+window.addEventListener('ruconnect:orgs', () => { if (getToken()) orgList(true).then(renderOrg, () => {}); });
+
 function render() {
   closeAllModals();
   if (cleanup) { try { cleanup(); } catch { /* ignore */ } cleanup = null; }
@@ -86,6 +115,7 @@ function renderShell() {
     iconButton('menu', t('nav.menu'), () => document.body.classList.toggle('nav-open')),
     h('div', { class: 'topbar-title', text: t(def.label) }),
     h('div', { class: 'topbar-right' },
+      orgSlot,
       langSelect(),
       themeButton(),
       h('span', { class: 'user-chip', title: user.name || '' }, icon('users'), h('span', { text: user.display_name || user.name || '' })),
@@ -93,6 +123,7 @@ function renderShell() {
   const scrim = h('div', { class: 'scrim', onclick: () => document.body.classList.remove('nav-open') });
   clear(root).append(h('div', { class: 'layout' }, sidebar, scrim, h('div', { class: 'main' }, topbar, content)));
   document.title = t(def.label) + ' · RuConnect';
+  renderOrg();
   try {
     const res = def.page.render(content, route);
     if (typeof res === 'function') cleanup = res;

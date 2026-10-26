@@ -16,15 +16,17 @@ type UserGroup struct {
 	Users        int      `json:"users"`
 	DeviceGroups []string `json:"device_groups"` // guids of granted device groups
 	OrgID        int64    `json:"-"`
+	OrgGUID      string   `json:"org_guid"`
+	OrgName      string   `json:"org_name"`
 	CreatedAt    int64    `json:"created_at"`
 }
 
 const userGroupSelect = `SELECT g.id, g.guid, g.name, g.note, (SELECT COUNT(*) FROM users u WHERE u.group_id = g.id), g.created_at,
-	IFNULL(g.org_id, 0) FROM user_groups g`
+	IFNULL(g.org_id, 0), COALESCE((SELECT o.guid FROM organizations o WHERE o.id = g.org_id), ''), COALESCE((SELECT o.name FROM organizations o WHERE o.id = g.org_id), '') FROM user_groups g`
 
 func scanUserGroup(row interface{ Scan(...any) error }) (*UserGroup, error) {
 	var g UserGroup
-	err := row.Scan(&g.ID, &g.GUID, &g.Name, &g.Note, &g.Users, &g.CreatedAt, &g.OrgID)
+	err := row.Scan(&g.ID, &g.GUID, &g.Name, &g.Note, &g.Users, &g.CreatedAt, &g.OrgID, &g.OrgGUID, &g.OrgName)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}

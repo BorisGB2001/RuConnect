@@ -308,13 +308,15 @@ type DeviceGroup struct {
 	StrategyName string `json:"strategy_name"`
 	StrategyGUID string `json:"strategy_guid"`
 	OrgID        int64  `json:"-"`
+	OrgGUID      string `json:"org_guid"`
+	OrgName      string `json:"org_name"`
 	Devices      int    `json:"devices"`
 	CreatedAt    int64  `json:"created_at"`
 }
 
 func scanGroup(row interface{ Scan(...any) error }) (*DeviceGroup, error) {
 	var g DeviceGroup
-	err := row.Scan(&g.ID, &g.GUID, &g.Name, &g.Note, &g.StrategyName, &g.StrategyGUID, &g.OrgID, &g.Devices, &g.CreatedAt)
+	err := row.Scan(&g.ID, &g.GUID, &g.Name, &g.Note, &g.StrategyName, &g.StrategyGUID, &g.OrgID, &g.OrgGUID, &g.OrgName, &g.Devices, &g.CreatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -323,7 +325,7 @@ func scanGroup(row interface{ Scan(...any) error }) (*DeviceGroup, error) {
 
 const groupSelect = `SELECT g.id, g.guid, g.name, g.note,
 	COALESCE((SELECT name FROM strategies st WHERE st.id = g.strategy_id), ''),
-	COALESCE((SELECT guid FROM strategies st WHERE st.id = g.strategy_id), ''), IFNULL(g.org_id, 0), (SELECT COUNT(*) FROM devices d WHERE d.group_id = g.id), g.created_at FROM device_groups g`
+	COALESCE((SELECT guid FROM strategies st WHERE st.id = g.strategy_id), ''), IFNULL(g.org_id, 0), COALESCE((SELECT o.guid FROM organizations o WHERE o.id = g.org_id), ''), COALESCE((SELECT o.name FROM organizations o WHERE o.id = g.org_id), ''), (SELECT COUNT(*) FROM devices d WHERE d.group_id = g.id), g.created_at FROM device_groups g`
 
 // CreateDeviceGroup creates a group in an organization (0: none).
 func (s *Store) CreateDeviceGroup(ctx context.Context, org int64, name, note string) (*DeviceGroup, error) {

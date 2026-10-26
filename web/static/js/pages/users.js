@@ -1,5 +1,5 @@
 import { t } from '../i18n.js';
-import { api, enc } from '../api.js';
+import { api, enc, can } from '../api.js';
 import { setParams } from '../router.js';
 import {
   h, clear, pageHeader, button, iconButton, dataTable, searchInput, formDialog, confirmDialog, modal,
@@ -7,6 +7,7 @@ import {
 } from '../ui.js';
 import { qrSvg } from '../qr.js';
 import { userGroupOptions } from './usergroups.js';
+import { moveToOrgDialog, orgColumn, createInOrgIntro } from './organizations.js';
 
 function userFields(u, groups) {
   const edit = !!u;
@@ -60,6 +61,7 @@ export default {
       columns: [
         { label: t('users.name'), render: (u) => h('div', { class: 'cell-main' }, h('strong', { text: u.name }), u.display_name && h('div', { class: 'muted small', text: u.display_name })) },
         { label: t('users.email'), key: 'email' },
+        orgColumn(),
         { label: t('users.group'), key: 'group_name' },
         { label: t('users.role'), render: (u) => (u.is_admin ? badge(t('users.admin'), 'accent')
           : u.role === 'helpdesk' ? badge(t('users.roleHelpdesk'), 'ok')
@@ -68,11 +70,16 @@ export default {
         { label: t('users.twoFactor'), render: (u) => (u.totp_enabled ? badge(t('common.on'), 'ok') : h('span', { class: 'muted', text: t('common.off') })) },
         { label: t('users.note'), class: 'col-note', key: 'note' },
         { label: t('common.created'), render: (u) => timeCell(u.created_at) },
-      ],
+      ].filter(Boolean),
       perm: 'admin',
       actions: (u) => [
         iconButton('edit', t('common.edit'), () => edit(u)),
         iconButton('shield', t('users.totpManage'), () => totp(u)),
+        can('server') && iconButton('list', t('org.move'), () => moveToOrgDialog({
+          name: u.name, current: u.org_guid, hint: t('org.moveUserHint'),
+          save: (org) => api.put('/api/admin/users/' + enc(u.guid) + '/organization', { org_guid: org }),
+          done: () => table.reload(),
+        })),
         iconButton('trash', t('common.delete'), () => remove(u), 'ghost-danger'),
       ],
     });
@@ -82,7 +89,7 @@ export default {
     }
     async function create() {
       formDialog({
-        title: t('users.create'), fields: userFields(null, await groups()), submitLabel: t('common.create'),
+        title: t('users.create'), fields: userFields(null, await groups()), submitLabel: t('common.create'), intro: await createInOrgIntro(),
         onSubmit: async (v) => { await api.post('/api/admin/users', payload(v)); toast(t('users.created'), 'ok'); table.reload(); },
       });
     }

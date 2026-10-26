@@ -4,6 +4,7 @@ import { t } from './i18n.js';
 
 const TOKEN_KEY = 'ruconnect.token';
 const USER_KEY = 'ruconnect.user';
+const ORG_KEY = 'ruconnect.org';
 
 export class ApiError extends Error {
   constructor(status, message, body) {
@@ -20,21 +21,65 @@ export function getToken() { return storageGet('sessionStorage', TOKEN_KEY); }
 export function getUser() {
   try { return JSON.parse(storageGet('sessionStorage', USER_KEY) || 'null'); } catch { return null; }
 }
-// Panel permission of the signed-in user: 'admin' > 'operate' > 'view'.
-const LEVELS = { view: 0, operate: 1, admin: 2 };
+// Panel permission of the signed-in user: 'server' > 'admin' > 'operate' > 'view'.
+// 'server' is an administrator without an organization (server administrator);
+// an organization's administrators get 'admin'.
+const LEVELS = { view: 0, operate: 1, admin: 2, server: 3 };
 export function userLevel(u = getUser()) {
   if (!u) return -1;
-  if (u.is_admin) return LEVELS.admin;
+  if (u.is_admin) return u.org_guid ? LEVELS.admin : LEVELS.server;
   if (u.role === 'helpdesk') return LEVELS.operate;
   if (u.role === 'auditor') return LEVELS.view;
   return -1;
 }
 export function can(level) { return userLevel() >= LEVELS[level]; }
 
+// Server staff (panel users without an organization) see every organization.
+export function isServerStaff(u = getUser()) { return !!u && !u.org_guid; }
+
 export function setSession(token, user) {
   storageSet('sessionStorage', TOKEN_KEY, token);
   storageSet('sessionStorage', USER_KEY, user ? JSON.stringify(user) : null);
+  orgCache = null;
+  if (!token) setOrgFilter('');
 }
+
+// ---- organization filter (server administrators) ----
+// '' = all organizations, 'none' = records without an organization, else an organization GUID.
+export function orgFilter() { return can('server') ? storageGet('sessionStorage', ORG_KEY) || '' : ''; }
+export function setOrgFilter(v) { storageSet('sessionStorage', ORG_KEY, v || null); }
+// The organization new records are created in ('' = none or not chosen).
+export function selectedOrg() { const v = orgFilter(); return v && v !== 'none' ? v : ''; }
+
+const ORG_SCOPED_CREATE = ['/api/admin/users', '/api/admin/groups', '/api/admin/user-groups', '/api/admin/strategies'];
+
+function withOrgParam(path, params) {
+  const org = orgFilter();
+  if (!org || !path.startsWith('/api/admin/') || path.startsWith('/api/admin/organizations')) return params;
+  if (params && params.org !== undefined) return params;
+  return { ...(params || {}), org };
+}
+
+function withOrgBody(path, body) {
+  const org = selectedOrg();
+  if (!org || !ORG_SCOPED_CREATE.includes(path) || !body || typeof body !== 'object' || Array.isArray(body) || 'org_guid' in body) return body;
+  return { ...body, org_guid: org };
+}
+
+// Organizations visible to the signed-in user, cached for the session.
+let orgCache = null;
+export async function orgList(force) {
+  if (!orgCache || force) {
+    const res = await request('GET', '/api/admin/organizations');
+    orgCache = (res && res.data) || [];
+    if (can('server')) {
+      const cur = orgFilter();
+      if (cur && cur !== 'none' && !orgCache.some((o) => o.guid === cur)) setOrgFilter('');
+    }
+  }
+  return orgCache;
+}
+export function resetOrgCache() { orgCache = null; }
 
 export async function request(method, path, body, { auth = true, token } = {}) {
   const headers = { Accept: 'application/json' };
@@ -75,8 +120,8 @@ export function qs(params) {
 }
 
 export const api = {
-  get: (p, params) => request('GET', p + qs(params)),
-  post: (p, b) => request('POST', p, b ?? {}),
+  get: (p, params) => request('GET', p + qs(withOrgParam(p, params))),
+  post: (p, b) => request('POST', p, withOrgBody(p, b ?? {})),
   put: (p, b) => request('PUT', p, b ?? {}),
   del: (p) => request('DELETE', p),
 };
@@ -122,7 +167,7 @@ export async function download(path, params, fallbackName) {
   if (tok) headers.Authorization = 'Bearer ' + tok;
   let res;
   try {
-    res = await fetch(path + qs(params), { headers, credentials: 'same-origin', cache: 'no-store' });
+    res = await fetch(path + qs(withOrgParam(path, params)), { headers, credentials: 'same-origin', cache: 'no-store' });
   } catch {
     throw new ApiError(0, t('error.network'));
   }
