@@ -79,7 +79,13 @@ func serve(cfg config.Config, log *slog.Logger, withAPI bool) error {
 
 	errc := make(chan error, 8)
 	if cfg.Rendezvous.Enabled {
-		if err := startRendezvous(ctx, cfg, st, log, errc); err != nil {
+		err := startRendezvous(ctx, cfg, st, log, errc)
+		if errors.Is(err, syscall.EADDRINUSE) && withAPI {
+			// Typically stock hbbs/hbbr still running from an older compose
+			// file: keep serving the API and panel instead of crash-looping.
+			log.Error("built-in ID server not started: port in use; stop the stock hbbs/hbbr containers "+
+				"(docker compose up -d --remove-orphans) or set RUCONNECT_RENDEZVOUS=false", "err", err)
+		} else if err != nil {
 			return err
 		}
 	}

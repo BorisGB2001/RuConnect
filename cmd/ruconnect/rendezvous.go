@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"strconv"
@@ -33,17 +34,34 @@ func startRendezvous(ctx context.Context, cfg config.Config, st *store.Store, lo
 		rs.RelayPort = rc.RelayPort
 	}
 
+	// Open every port first, so a busy one leaves nothing half started.
+	var closers []io.Closer
+	fail := func(err error) error {
+		for _, c := range closers {
+			c.Close()
+		}
+		return err
+	}
 	tcp, err := net.Listen("tcp", ":"+strconv.Itoa(rc.Port))
 	if err != nil {
-		return err
+		return fail(err)
 	}
+	closers = append(closers, tcp)
 	aux, err := net.Listen("tcp", ":"+strconv.Itoa(rc.Port-1))
 	if err != nil {
-		return err
+		return fail(err)
 	}
+	closers = append(closers, aux)
 	udp, err := net.ListenUDP("udp", &net.UDPAddr{Port: rc.Port})
 	if err != nil {
-		return err
+		return fail(err)
+	}
+	closers = append(closers, udp)
+	var rl net.Listener
+	if rc.RelayEnabled {
+		if rl, err = net.Listen("tcp", ":"+strconv.Itoa(rc.RelayPort)); err != nil {
+			return fail(err)
+		}
 	}
 	run := func(name string, f func() error) {
 		go func() {
@@ -56,11 +74,7 @@ func startRendezvous(ctx context.Context, cfg config.Config, st *store.Store, lo
 	run("ID server aux", func() error { return rs.ServeAux(ctx, aux) })
 	run("ID server udp", func() error { return rs.ServeUDP(ctx, udp) })
 
-	if rc.RelayEnabled {
-		rl, err := net.Listen("tcp", ":"+strconv.Itoa(rc.RelayPort))
-		if err != nil {
-			return err
-		}
+	if rl != nil {
 		relay := rendezvous.NewRelay(key, log)
 		run("relay server", func() error { return relay.Serve(ctx, rl) })
 	}
