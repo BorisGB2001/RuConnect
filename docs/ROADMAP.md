@@ -30,15 +30,15 @@
 - [x] Devices and device groups, remote disconnect
 - [x] Shared address books and sharing rules
 - [x] Connection, file transfer and alarm logs
-- [x] User groups, per-group access to device groups (API)
-- [x] Filters and CSV export for logs (API: `?format=csv`)
-- [ ] Russian UI locale
+- [x] User groups, per-group access to device groups
+- [x] Filters and CSV export for logs
+- [x] Russian UI locale
 
 ## Stage 3. Enterprise features
 - [x] OIDC login (Keycloak, Authentik, Yandex ID, Google, ...): PKCE, link by verified email, optional auto-create
 - [x] LDAP / Active Directory login (service bind + user bind, admin/required groups)
 - [x] Mass deployment: `/api/devices/cli` (`rustdesk --assign`), `/api/devices/deploy`, sysinfo presets
-- [x] Deployment config generator (API: config string, `rustdesk --config`, installer name)
+- [x] Deployment config generator: config string, `rustdesk --config`, installer name
 - [x] Strategies: client option sets pushed via heartbeat (device > group > default)
 - [ ] Session recording upload and playback (`/api/record`)
 - [ ] Roles and delegated administration
@@ -47,10 +47,10 @@
 ## Multi-server
 - [x] Sites (hbbs servers) managed in the panel, `/s/<slug>` API URLs per site
 - [x] Peers of other sites handed to clients as `ID@host?key=` (address books, accessible devices)
-- [x] Per-site health checks (hbbs/hbbr TCP reachability, API)
+- [x] Per-site health checks (hbbs/hbbr TCP reachability)
 
 ## Stage 4. Delivery
 - [ ] Multi-arch image (amd64, arm64) published to a registry
 - [x] Ready `docker-compose.yml`: hbbs + hbbr + ruconnect
 - [x] Persistent volume, healthcheck, updates via `docker compose pull`
-- [ ] Deployment, upgrade and backup guide
+- [x] Deployment, upgrade and backup guide (`docs/DEPLOYMENT.md`)
