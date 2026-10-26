@@ -12,6 +12,8 @@ already speaks to RustDesk Server Pro, so the features that are normally paid wo
 - **Device inventory**: online status, OS/CPU/RAM, owner, device groups, remote disconnect;
 - **Audit**: connection log (who, from where, how authenticated, duration, notes), file transfers, security alarms;
 - **Mass deployment**: `rustdesk --assign` / `rustdesk --deploy` and `preset-*` client options;
+- **Single sign-on**: OIDC providers and LDAP / Active Directory;
+- **Strategies**: client settings policies pushed to devices, per device, group or globally;
 - **Multi-server**: one RuConnect serves several hbbs sites; every client reaches devices on every site;
 - **Web panel** for all of the above (English and Russian).
 
@@ -95,6 +97,25 @@ the client rewrites `https://host:21114` to `https://host`. Self-signed certific
 **Backup:** the whole state is the `ruconnect-data` volume (`/data/ruconnect.db`) plus `deploy/data`
 (hbbs keys).
 
+## Single sign-on
+
+**OIDC** (Keycloak, Authentik, Yandex ID, Google, Microsoft Entra ID, ...): add a provider in the panel
+(**Login providers**) and register the redirect URI it shows, `https://<host>/api/oidc/callback`, with the
+identity provider. Clients then get a "Continue with <provider>" button. Accounts are matched by verified
+email; enable *auto-create* to create them on first login.
+
+**LDAP / Active Directory:** set the `RUCONNECT_LDAP_*` variables (see `.env.example`). Users log in from
+the client with their directory credentials and are created on first login. Members of
+`RUCONNECT_LDAP_ADMIN_GROUP` become administrators; `RUCONNECT_LDAP_REQUIRED_GROUP` restricts who may
+log in. Local accounts that have a password are never taken over by a directory entry with the same name.
+
+## Strategies
+
+A strategy is a named set of client options (for example `enable-file-transfer=N`,
+`approve-mode=click`, `verification-method=use-permanent-password`) that RuConnect pushes to devices
+through the heartbeat. A device uses its own strategy, else its device group's, else the default one.
+An empty value resets an option to the client default.
+
 ## Mass deployment
 
 Create a deployment token in the panel (**Settings**), then on a machine with the client installed:
@@ -104,7 +125,7 @@ rustdesk --assign --token <TOKEN> --user_name alice --device_group_name Office \
          --address_book_name "Support" --address_book_tag servers
 ```
 
-Alternatively, set the client options `preset-user-name`, `preset-device-group-name`,
+Alternatively, set the client options `preset-user-name`, `preset-device-group-name`, `preset-strategy-name`,
 `preset-address-book-name` (`-tag`, `-alias`, `-password`, `-note`) and `preset-note`.
 They are applied when the device first reports to RuConnect.
 
