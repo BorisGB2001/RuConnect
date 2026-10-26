@@ -33,6 +33,26 @@ type Config struct {
 	AuditRetentionDays int
 	// LDAP enables directory logins when URL and BaseDN are set.
 	LDAP LDAP
+	// Rendezvous configures the built-in ID and relay servers.
+	Rendezvous Rendezvous
+}
+
+// Rendezvous configures the built-in RustDesk-compatible ID server (hbbs
+// replacement: TCP+UDP Port, TCP Port-1 for NAT tests and online queries) and
+// relay server (hbbr replacement: TCP RelayPort).
+type Rendezvous struct {
+	Enabled      bool
+	Port         int
+	RelayPort    int
+	RelayEnabled bool
+	// PrivateKeyFile holds the server key in hbbs format; the public key is
+	// written next to it with a .pub suffix.
+	PrivateKeyFile string
+	// RelayServers are handed to clients for relayed sessions; empty means
+	// RelayServer, else the ID server host.
+	RelayServers []string
+	// AlwaysRelay makes every session go through the relay.
+	AlwaysRelay bool
 }
 
 type LDAP struct {
@@ -47,7 +67,7 @@ func Load() Config {
 		DB:                 env("RUCONNECT_DB", "data/ruconnect.db"),
 		AdminUser:          env("RUCONNECT_ADMIN_USER", "admin"),
 		AdminPassword:      os.Getenv("RUCONNECT_ADMIN_PASSWORD"),
-		KeyFile:            env("RUCONNECT_KEY_FILE", "data/id_ed25519.pub"),
+		KeyFile:            os.Getenv("RUCONNECT_KEY_FILE"),
 		IDServer:           os.Getenv("RUCONNECT_ID_SERVER"),
 		RelayServer:        os.Getenv("RUCONNECT_RELAY_SERVER"),
 		APIServer:          os.Getenv("RUCONNECT_API_SERVER"),
@@ -67,7 +87,26 @@ func Load() Config {
 			StartTLS:           envBool("RUCONNECT_LDAP_STARTTLS", false),
 			InsecureSkipVerify: envBool("RUCONNECT_LDAP_INSECURE_SKIP_VERIFY", false),
 		},
+		Rendezvous: Rendezvous{
+			Enabled:        envBool("RUCONNECT_RENDEZVOUS", true),
+			Port:           envInt("RUCONNECT_RENDEZVOUS_PORT", 21116),
+			RelayEnabled:   envBool("RUCONNECT_RELAY", true),
+			RelayPort:      envInt("RUCONNECT_RELAY_PORT", 21117),
+			PrivateKeyFile: env("RUCONNECT_PRIVATE_KEY_FILE", "data/id_ed25519"),
+			RelayServers:   envList("RUCONNECT_RELAY_SERVERS"),
+			AlwaysRelay:    envBool("RUCONNECT_ALWAYS_RELAY", false),
+		},
 	}
+}
+
+func envList(key string) []string {
+	var out []string
+	for _, v := range strings.Split(os.Getenv(key), ",") {
+		if v = strings.TrimSpace(v); v != "" {
+			out = append(out, v)
+		}
+	}
+	return out
 }
 
 func env(key, def string) string {

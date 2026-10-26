@@ -194,9 +194,14 @@ func (s *Server) RunMaintenance(ctx context.Context) {
 	}
 }
 
-// publicKey returns the hbbs public key, if the key file is readable.
+// publicKey returns the ID server public key, if the key file is readable:
+// RUCONNECT_KEY_FILE (an external hbbs), else the built-in server's key.
 func (s *Server) publicKey() string {
-	b, err := os.ReadFile(s.cfg.KeyFile)
+	path := s.cfg.KeyFile
+	if path == "" {
+		path = s.cfg.Rendezvous.PrivateKeyFile + ".pub"
+	}
+	b, err := os.ReadFile(path)
 	if err != nil {
 		return ""
 	}

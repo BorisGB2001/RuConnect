@@ -316,6 +316,17 @@ CREATE INDEX tokens_kind ON tokens(kind);
 	`
 ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT '';
 `,
+	// 8: built-in rendezvous server: the identity each RustDesk ID registered with.
+	`
+CREATE TABLE rendezvous_peers (
+	id         TEXT PRIMARY KEY,
+	uuid       BLOB NOT NULL,
+	pk         BLOB NOT NULL,
+	ip         TEXT NOT NULL DEFAULT '',
+	created_at INTEGER NOT NULL,
+	updated_at INTEGER NOT NULL
+);
+`,
 }
 
 func (s *Store) migrate(ctx context.Context) error {

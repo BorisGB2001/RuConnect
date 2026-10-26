@@ -20,7 +20,8 @@ import (
 )
 
 const usage = `Usage:
-  ruconnect                        run the server
+  ruconnect                        run the server (API, panel, ID and relay servers)
+  ruconnect id-server              run only the ID and relay servers (a branch site)
   ruconnect healthcheck            exit 0 if the local server is healthy
   ruconnect passwd <user> <pass>   set a user's password (creates an admin if missing)
   ruconnect version                print the version
@@ -43,7 +44,9 @@ func main() {
 	var err error
 	switch cmd {
 	case "":
-		err = serve(cfg, log)
+		err = serve(cfg, log, true)
+	case "id-server":
+		err = serve(cfg, log, false)
 	case "healthcheck":
 		err = healthcheck(cfg)
 	case "passwd":
@@ -64,18 +67,36 @@ func main() {
 	}
 }
 
-func serve(cfg config.Config, log *slog.Logger) error {
+func serve(cfg config.Config, log *slog.Logger, withAPI bool) error {
 	st, err := store.Open(cfg.DB)
 	if err != nil {
 		return err
 	}
 	defer st.Close()
-	if err := seedAdmin(cfg, st, log); err != nil {
-		return err
-	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+
+	errc := make(chan error, 8)
+	if cfg.Rendezvous.Enabled {
+		if err := startRendezvous(ctx, cfg, st, log, errc); err != nil {
+			return err
+		}
+	}
+	if !withAPI {
+		if !cfg.Rendezvous.Enabled {
+			return errors.New("id-server: the built-in ID server is disabled (RUCONNECT_RENDEZVOUS=false)")
+		}
+		select {
+		case err := <-errc:
+			return err
+		case <-ctx.Done():
+			return nil
+		}
+	}
+	if err := seedAdmin(cfg, st, log); err != nil {
+		return err
+	}
 
 	srv := api.New(cfg, st, log, web.FS())
 	go srv.RunMaintenance(ctx)
@@ -88,7 +109,6 @@ func serve(cfg config.Config, log *slog.Logger) error {
 		WriteTimeout:      60 * time.Second,
 		IdleTimeout:       120 * time.Second,
 	}
-	errc := make(chan error, 1)
 	go func() {
 		log.Info("RuConnect started", "version", api.Version, "listen", cfg.Listen, "db", cfg.DB)
 		errc <- hs.ListenAndServe()
