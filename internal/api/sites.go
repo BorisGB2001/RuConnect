@@ -73,6 +73,25 @@ func (s *Server) rendezvous(v *store.Server) (host, key string) {
 	return host, key
 }
 
+// relayOf returns the effective relay address of a site: the stored one, the
+// configured one for the default site, else the ID server host (hbbr usually
+// runs next to hbbs).
+func (s *Server) relayOf(v *store.Server) string {
+	relay := v.RelayServer
+	if relay == "" && v.IsDefault {
+		relay = s.cfg.RelayServer
+	}
+	if relay == "" {
+		host, _ := s.rendezvous(v)
+		if h, _, err := net.SplitHostPort(host); err == nil {
+			relay = h
+		} else {
+			relay = host
+		}
+	}
+	return relay
+}
+
 // peerResolver rewrites device ids for clients of one site.
 type peerResolver struct {
 	from    int64
@@ -156,13 +175,14 @@ func (s *Server) adminListServers(w http.ResponseWriter, r *http.Request, u *sto
 		*store.Server
 		// Effective values: for the default site, stored ones fall back to
 		// RUCONNECT_ID_SERVER and the hbbs key file.
-		EffectiveIDServer string `json:"effective_id_server"`
-		EffectiveKey      string `json:"effective_key"`
+		EffectiveIDServer    string `json:"effective_id_server"`
+		EffectiveRelayServer string `json:"effective_relay_server"`
+		EffectiveKey         string `json:"effective_key"`
 	}
 	out := make([]item, 0, len(list))
 	for _, v := range list {
 		host, key := s.rendezvous(v)
-		out = append(out, item{Server: v, EffectiveIDServer: host, EffectiveKey: key})
+		out = append(out, item{Server: v, EffectiveIDServer: host, EffectiveRelayServer: s.relayOf(v), EffectiveKey: key})
 	}
 	writeList(w, len(out), out)
 }
@@ -264,17 +284,7 @@ func (s *Server) adminCheckServer(w http.ResponseWriter, r *http.Request, u *sto
 		return
 	}
 	host, _ := s.rendezvous(v)
-	relay := v.RelayServer
-	if relay == "" && v.IsDefault {
-		relay = s.cfg.RelayServer
-	}
-	if relay == "" {
-		if h, _, err := net.SplitHostPort(host); err == nil {
-			relay = h
-		} else {
-			relay = host
-		}
-	}
+	relay := s.relayOf(v)
 	var wg sync.WaitGroup
 	var idRes, relayRes probeResult
 	wg.Add(2)

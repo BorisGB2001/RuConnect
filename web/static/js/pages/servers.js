@@ -18,7 +18,7 @@ const fields = (s = {}) => [
     hint: s.is_default ? t('servers.slugDefault') : t('servers.slugHint'),
   },
   { name: 'id_server', label: t('servers.idServer'), value: s.id_server, placeholder: (s.is_default && s.effective_id_server) || 'hbbs.example.com:21116', hint: s.is_default ? t('servers.defaultFallback') : t('servers.idServerHint') },
-  { name: 'relay_server', label: t('servers.relayServer'), value: s.relay_server, placeholder: 'hbbr.example.com:21117' },
+  { name: 'relay_server', label: t('servers.relayServer'), value: s.relay_server, placeholder: (s.is_default && s.effective_relay_server) || 'hbbr.example.com:21117' },
   { name: 'key', label: t('servers.key'), value: s.key, full: true, hint: t('servers.keyHint') },
   { name: 'note', label: t('common.note'), type: 'textarea', value: s.note, full: true },
 ];
@@ -52,7 +52,7 @@ export default {
         kv([
           [t('servers.apiUrl'), copyField(apiUrl(s))],
           [t('servers.idServer'), copyField(s.effective_id_server || s.id_server)],
-          [t('servers.relayServer'), copyField(s.relay_server)],
+          [t('servers.relayServer'), copyField(s.effective_relay_server || s.relay_server)],
           [t('servers.key'), copyField(s.effective_key || s.key)],
           s.note && [t('common.note'), s.note],
         ]),

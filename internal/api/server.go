@@ -37,7 +37,7 @@ type Server struct {
 }
 
 func New(cfg config.Config, st *store.Store, log *slog.Logger, web fs.FS) *Server {
-	if _, err := st.EnsureDefaultServer(context.Background(), cfg.IDServer, cfg.RelayServer); err != nil {
+	if _, err := st.EnsureDefaultServer(context.Background()); err != nil {
 		log.Error("create default server", "err", err)
 	}
 	return &Server{

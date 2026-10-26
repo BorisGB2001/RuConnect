@@ -70,10 +70,12 @@ func (in *ServerInput) normalize() error {
 	return nil
 }
 
-// EnsureDefaultServer creates the default site on first start.
-func (s *Store) EnsureDefaultServer(ctx context.Context, idServer, relayServer string) (*Server, error) {
-	_, err := s.db.ExecContext(ctx, `INSERT INTO servers (guid, name, slug, id_server, relay_server, created_at)
-		VALUES (?, 'Default', ?, ?, ?, ?) ON CONFLICT(slug) DO NOTHING`, NewGUID(), DefaultServerSlug, idServer, relayServer, now())
+// EnsureDefaultServer creates the default site on first start. Its addresses
+// are left empty so they follow RUCONNECT_ID_SERVER / RUCONNECT_RELAY_SERVER
+// until an administrator overrides them in the panel.
+func (s *Store) EnsureDefaultServer(ctx context.Context) (*Server, error) {
+	_, err := s.db.ExecContext(ctx, `INSERT INTO servers (guid, name, slug, created_at)
+		VALUES (?, 'Default', ?, ?) ON CONFLICT(slug) DO NOTHING`, NewGUID(), DefaultServerSlug, now())
 	if err != nil {
 		return nil, err
 	}
