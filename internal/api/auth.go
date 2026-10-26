@@ -9,8 +9,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ruconnect/ruconnect/internal/store"
-	"github.com/ruconnect/ruconnect/internal/totp"
+	"github.com/BorisGB2001/RuConnect/internal/store"
+	"github.com/BorisGB2001/RuConnect/internal/totp"
 )
 
 type deviceInfo struct {

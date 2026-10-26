@@ -27,7 +27,7 @@
 Нужны Docker с плагином Compose и открытые для клиентов порты 21114-21119.
 
 ```bash
-git clone <репозиторий> ruconnect && cd ruconnect/deploy
+git clone https://github.com/BorisGB2001/RuConnect.git ruconnect && cd ruconnect/deploy
 cp .env.example .env        # укажите в RUCONNECT_ID_SERVER публичный адрес этого сервера
 docker compose up -d
 docker compose logs ruconnect | grep password   # сгенерированный пароль admin (только при первом запуске)

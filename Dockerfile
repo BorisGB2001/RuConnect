@@ -8,7 +8,7 @@ COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
 RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath \
-      -ldflags "-s -w -X github.com/ruconnect/ruconnect/internal/api.Version=${VERSION}" \
+      -ldflags "-s -w -X github.com/BorisGB2001/RuConnect/internal/api.Version=${VERSION}" \
       -o /out/ruconnect ./cmd/ruconnect \
  && mkdir -p /out/data
 

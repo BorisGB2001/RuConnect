@@ -14,9 +14,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ruconnect/ruconnect/internal/api"
-	"github.com/ruconnect/ruconnect/internal/config"
-	"github.com/ruconnect/ruconnect/internal/store"
+	"github.com/BorisGB2001/RuConnect/internal/api"
+	"github.com/BorisGB2001/RuConnect/internal/config"
+	"github.com/BorisGB2001/RuConnect/internal/store"
 )
 
 const (

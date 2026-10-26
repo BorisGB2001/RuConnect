@@ -3,7 +3,7 @@ package api
 import (
 	"net/http"
 
-	"github.com/ruconnect/ruconnect/internal/store"
+	"github.com/BorisGB2001/RuConnect/internal/store"
 )
 
 // The client's "Accessible devices" tab. Administrators see everything;

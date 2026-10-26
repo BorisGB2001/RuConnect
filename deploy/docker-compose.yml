@@ -31,7 +31,7 @@ services:
     restart: unless-stopped
 
   ruconnect:
-    image: ghcr.io/ruconnect/ruconnect:latest
+    image: ghcr.io/borisgb2001/ruconnect:latest
     build: .. # builds from source when the image is not available
     container_name: ruconnect-server
     network_mode: host # 21114/tcp

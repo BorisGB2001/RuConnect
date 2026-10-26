@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ruconnect/ruconnect/internal/store"
+	"github.com/BorisGB2001/RuConnect/internal/store"
 )
 
 func TestStrategyPushedViaHeartbeat(t *testing.T) {

@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ruconnect/ruconnect/internal/store"
+	"github.com/BorisGB2001/RuConnect/internal/store"
 )
 
 // Multi-server support.

@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/ruconnect/ruconnect/internal/store"
+	"github.com/BorisGB2001/RuConnect/internal/store"
 )
 
 func (s *Server) handleABPersonal(w http.ResponseWriter, r *http.Request, u *store.User) {

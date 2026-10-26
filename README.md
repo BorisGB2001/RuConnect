@@ -37,7 +37,7 @@ already speaks to RustDesk Server Pro, so the features that are normally paid wo
 Requirements: Docker with the Compose plugin, ports 21114-21119 reachable from clients.
 
 ```bash
-git clone <this repository> ruconnect && cd ruconnect/deploy
+git clone https://github.com/BorisGB2001/RuConnect.git ruconnect && cd ruconnect/deploy
 cp .env.example .env        # set RUCONNECT_ID_SERVER to this host's public address
 docker compose up -d
 docker compose logs ruconnect | grep password   # generated admin password (first start only)

@@ -3,7 +3,7 @@
 ## 1. Single site
 
 ```bash
-git clone <repository> ruconnect && cd ruconnect/deploy
+git clone https://github.com/BorisGB2001/RuConnect.git ruconnect && cd ruconnect/deploy
 cp .env.example .env
 $EDITOR .env                      # RUCONNECT_ID_SERVER=rustdesk.example.com
 docker compose up -d

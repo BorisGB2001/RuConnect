@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ruconnect/ruconnect/internal/store"
+	"github.com/BorisGB2001/RuConnect/internal/store"
 )
 
 // CSV export of audit logs: GET /api/admin/audit/{conns,files,alarms}?format=csv

@@ -1,4 +1,4 @@
-module github.com/ruconnect/ruconnect
+module github.com/BorisGB2001/RuConnect
 
 go 1.27.3
 

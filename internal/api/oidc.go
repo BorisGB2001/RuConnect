@@ -12,8 +12,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ruconnect/ruconnect/internal/oidc"
-	"github.com/ruconnect/ruconnect/internal/store"
+	"github.com/BorisGB2001/RuConnect/internal/oidc"
+	"github.com/BorisGB2001/RuConnect/internal/store"
 )
 
 // OIDC login for the stock client:
