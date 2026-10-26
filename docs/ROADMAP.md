@@ -35,13 +35,19 @@
 - [ ] Russian UI locale
 
 ## Stage 3. Enterprise features
-- [ ] OIDC (Keycloak, Authentik, Yandex ID, ...) and LDAP / Active Directory
+- [x] OIDC login (Keycloak, Authentik, Yandex ID, Google, ...): PKCE, link by verified email, optional auto-create
+- [ ] LDAP / Active Directory
 - [x] Mass deployment: `/api/devices/cli` (`rustdesk --assign`), `/api/devices/deploy`, sysinfo presets
 - [ ] Deployment config generator in the panel
-- [ ] Client setting strategies pushed via heartbeat
+- [x] Strategies: client option sets pushed via heartbeat (device > group > default)
 - [ ] Session recording upload and playback (`/api/record`)
 - [ ] Roles and delegated administration
 - [ ] hbbs integration: "login required" and switch-sides checks (see contract section 6)
+
+## Multi-server
+- [x] Sites (hbbs servers) managed in the panel, `/s/<slug>` API URLs per site
+- [x] Peers of other sites handed to clients as `ID@host?key=` (address books, accessible devices)
+- [ ] Per-site health checks (hbbs reachability) in the panel
 
 ## Stage 4. Delivery
 - [ ] Multi-arch image (amd64, arm64) published to a registry
