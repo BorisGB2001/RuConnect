@@ -23,6 +23,7 @@ type Strategy struct {
 	CreatedAt  int64             `json:"created_at"`
 	Devices    int               `json:"devices"`
 	Groups     int               `json:"groups"`
+	OrgID      int64             `json:"-"`
 }
 
 type StrategyInput struct {
@@ -30,17 +31,18 @@ type StrategyInput struct {
 	Note      string
 	Options   map[string]string
 	IsDefault bool
+	OrgID     int64 // organization on create (0: none); ignored on update
 }
 
 const strategySelect = `SELECT s.id, s.guid, s.name, s.note, s.options, s.is_default, s.modified_at, s.created_at,
 	(SELECT COUNT(*) FROM devices d WHERE d.strategy_id = s.id),
-	(SELECT COUNT(*) FROM device_groups g WHERE g.strategy_id = s.id) FROM strategies s`
+	(SELECT COUNT(*) FROM device_groups g WHERE g.strategy_id = s.id), IFNULL(s.org_id, 0) FROM strategies s`
 
 func scanStrategy(row interface{ Scan(...any) error }) (*Strategy, error) {
 	var v Strategy
 	var opts string
 	var def int
-	err := row.Scan(&v.ID, &v.GUID, &v.Name, &v.Note, &opts, &def, &v.ModifiedAt, &v.CreatedAt, &v.Devices, &v.Groups)
+	err := row.Scan(&v.ID, &v.GUID, &v.Name, &v.Note, &opts, &def, &v.ModifiedAt, &v.CreatedAt, &v.Devices, &v.Groups, &v.OrgID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -97,7 +99,7 @@ func (s *Store) CreateStrategy(ctx context.Context, in StrategyInput) (*Strategy
 	}
 	defer tx.Rollback()
 	if in.IsDefault {
-		if _, err := tx.ExecContext(ctx, `UPDATE strategies SET is_default = 0 WHERE is_default = 1`); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE strategies SET is_default = 0 WHERE is_default = 1 AND IFNULL(org_id, 0) = ?`, in.OrgID); err != nil {
 			return nil, err
 		}
 	}
@@ -106,8 +108,8 @@ func (s *Store) CreateStrategy(ctx context.Context, in StrategyInput) (*Strategy
 		return nil, err
 	}
 	guid := NewGUID()
-	_, err = tx.ExecContext(ctx, `INSERT INTO strategies (guid, name, note, options, is_default, modified_at, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?)`, guid, in.Name, in.Note, opts, boolInt(in.IsDefault), st, now())
+	_, err = tx.ExecContext(ctx, `INSERT INTO strategies (guid, name, note, options, is_default, org_id, modified_at, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, guid, in.Name, in.Note, opts, boolInt(in.IsDefault), nullID(in.OrgID), st, now())
 	if isUniqueErr(err) {
 		return nil, ErrConflict
 	}
@@ -135,7 +137,7 @@ func (s *Store) UpdateStrategy(ctx context.Context, guid string, in StrategyInpu
 	}
 	defer tx.Rollback()
 	if in.IsDefault && !cur.IsDefault {
-		if _, err := tx.ExecContext(ctx, `UPDATE strategies SET is_default = 0 WHERE is_default = 1`); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE strategies SET is_default = 0 WHERE is_default = 1 AND IFNULL(org_id, 0) = ?`, cur.OrgID); err != nil {
 			return nil, err
 		}
 	}
@@ -172,12 +174,15 @@ func (s *Store) StrategyByGUID(ctx context.Context, guid string) (*Strategy, err
 	return scanStrategy(s.db.QueryRowContext(ctx, strategySelect+` WHERE s.guid = ?`, guid))
 }
 
-func (s *Store) StrategyByName(ctx context.Context, name string) (*Strategy, error) {
-	return scanStrategy(s.db.QueryRowContext(ctx, strategySelect+` WHERE s.name = ?`, strings.TrimSpace(name)))
+// StrategyByName finds a strategy by name within an organization (0: none).
+func (s *Store) StrategyByName(ctx context.Context, org int64, name string) (*Strategy, error) {
+	return scanStrategy(s.db.QueryRowContext(ctx, strategySelect+` WHERE s.name = ? AND IFNULL(s.org_id, 0) = ?`, strings.TrimSpace(name), org))
 }
 
-func (s *Store) ListStrategies(ctx context.Context) ([]*Strategy, error) {
-	rows, err := s.db.QueryContext(ctx, strategySelect+` ORDER BY s.is_default DESC, s.name`)
+// ListStrategies lists the strategies of an organization (0: any, NoOrg: none).
+func (s *Store) ListStrategies(ctx context.Context, org int64) ([]*Strategy, error) {
+	cond, args := orgCond("s.org_id", org)
+	rows, err := s.db.QueryContext(ctx, strategySelect+` WHERE `+cond+` ORDER BY s.is_default DESC, s.name`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -193,12 +198,15 @@ func (s *Store) ListStrategies(ctx context.Context) ([]*Strategy, error) {
 	return out, rows.Err()
 }
 
-// EffectiveStrategy returns the strategy a device should apply, or nil.
+// EffectiveStrategy returns the strategy a device should apply, or nil: its
+// own, its group's, else the default strategy of its organization.
 func (s *Store) EffectiveStrategy(ctx context.Context, deviceID string) (*Strategy, error) {
 	v, err := scanStrategy(s.db.QueryRowContext(ctx, strategySelect+` WHERE s.id = COALESCE(
 		(SELECT d.strategy_id FROM devices d WHERE d.id = ?),
 		(SELECT g.strategy_id FROM devices d JOIN device_groups g ON g.id = d.group_id WHERE d.id = ?),
-		(SELECT id FROM strategies WHERE is_default = 1 LIMIT 1))`, deviceID, deviceID))
+		(SELECT st.id FROM strategies st WHERE st.is_default = 1
+			AND IFNULL(st.org_id, 0) = (SELECT IFNULL(d.org_id, 0) FROM devices d WHERE d.id = ?) LIMIT 1))`,
+		deviceID, deviceID, deviceID))
 	if errors.Is(err, ErrNotFound) {
 		return nil, nil
 	}

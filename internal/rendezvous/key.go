@@ -13,10 +13,22 @@ import (
 
 // LoadOrCreateKey reads the server's Ed25519 key pair from path (and
 // path+".pub"), in the format hbbs uses: base64 of libsodium's 64-byte secret
-// key and of the 32-byte public key. A missing key is generated, so an
-// existing hbbs data directory keeps its key and clients need no change.
-func LoadOrCreateKey(path string) (ed25519.PrivateKey, error) {
+// key and of the 32-byte public key. A missing key is copied from importPath
+// (an earlier hbbs key file) when that exists, else generated, so clients
+// keep their configured Key.
+func LoadOrCreateKey(path, importPath string) (ed25519.PrivateKey, error) {
 	data, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) && importPath != "" {
+		if old, ierr := os.ReadFile(importPath); ierr == nil {
+			if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+				return nil, err
+			}
+			if err := os.WriteFile(path, old, 0o600); err != nil {
+				return nil, err
+			}
+			data, err = old, nil
+		}
+	}
 	if errors.Is(err, os.ErrNotExist) {
 		return createKey(path)
 	}

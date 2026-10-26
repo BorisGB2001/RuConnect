@@ -190,9 +190,9 @@ func (s *Server) handleAuditConnActive(w http.ResponseWriter, r *http.Request, u
 }
 
 // controllerID limits session notes to sessions opened from the device the
-// caller logged in on. Administrators may annotate any session ("").
+// caller logged in on. Server administrators may annotate any session ("").
 func (s *Server) controllerID(r *http.Request, u *store.User) string {
-	if u.IsAdmin {
+	if isServerAdmin(u) {
 		return ""
 	}
 	_, tok, err := s.authUser(r)

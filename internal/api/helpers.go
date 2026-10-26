@@ -155,7 +155,8 @@ type perm int
 const (
 	permView    perm = iota // auditors, helpdesk and administrators
 	permOperate             // helpdesk and administrators
-	permAdmin               // administrators only
+	permAdmin               // administrators (of the server or an organization)
+	permServer              // server administrators only
 )
 
 // routePerm maps a panel route pattern to the permission it needs.
@@ -165,7 +166,10 @@ const (
 func routePerm(pattern string) perm {
 	method, path, _ := strings.Cut(pattern, " ")
 	switch {
-	case strings.HasPrefix(path, "/api/admin/tokens"), strings.HasPrefix(path, "/api/admin/oidc"):
+	case strings.HasPrefix(path, "/api/admin/oidc"), strings.HasPrefix(path, "/api/admin/servers"),
+		strings.HasPrefix(path, "/api/admin/organizations") && method != http.MethodGet:
+		return permServer
+	case strings.HasPrefix(path, "/api/admin/tokens"):
 		return permAdmin
 	case method == http.MethodGet, path == "/api/admin/password":
 		return permView
@@ -178,6 +182,8 @@ func routePerm(pattern string) perm {
 
 func userPerm(u *store.User) (perm, bool) {
 	switch {
+	case isServerAdmin(u):
+		return permServer, true
 	case u.IsAdmin:
 		return permAdmin, true
 	case u.Role == store.RoleHelpdesk:

@@ -34,15 +34,18 @@ type loginRequest struct {
 
 // userPayload is the client's UserPayload shape.
 type userPayload struct {
-	Name        string         `json:"name"`
-	DisplayName string         `json:"display_name"`
-	Avatar      string         `json:"avatar"`
-	Email       string         `json:"email"`
-	Note        string         `json:"note"`
-	Status      int            `json:"status"`
-	IsAdmin     bool           `json:"is_admin"`
-	Role        string         `json:"role,omitempty"` // RuConnect panel role; ignored by the client
-	Info        map[string]any `json:"info"`
+	Name        string `json:"name"`
+	DisplayName string `json:"display_name"`
+	Avatar      string `json:"avatar"`
+	Email       string `json:"email"`
+	Note        string `json:"note"`
+	Status      int    `json:"status"`
+	IsAdmin     bool   `json:"is_admin"`
+	Role        string `json:"role,omitempty"` // RuConnect panel role; ignored by the client
+	// RuConnect organization; ignored by the client.
+	OrgGUID string         `json:"org_guid,omitempty"`
+	OrgName string         `json:"org_name,omitempty"`
+	Info    map[string]any `json:"info"`
 }
 
 func toPayload(u *store.User) userPayload {
@@ -54,6 +57,8 @@ func toPayload(u *store.User) userPayload {
 		Status:      u.Status,
 		IsAdmin:     u.IsAdmin,
 		Role:        u.Role,
+		OrgGUID:     u.OrgGUID,
+		OrgName:     u.OrgName,
 		Info: map[string]any{
 			"email_verification":       false,
 			"email_alarm_notification": false,
@@ -103,6 +108,13 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		if !ok {
 			fail()
 			s.log.Warn("login failed", "user", clip(req.Username, 64), "ip", ip)
+			writeError(w, http.StatusUnauthorized, "Wrong username or password")
+			return
+		}
+		if !s.mayUseHost(r, u) {
+			// Members of other organizations do not exist on this domain.
+			fail()
+			s.log.Warn("login refused on another organization's domain", "user", u.Name, "host", requestHost(r), "ip", ip)
 			writeError(w, http.StatusUnauthorized, "Wrong username or password")
 			return
 		}

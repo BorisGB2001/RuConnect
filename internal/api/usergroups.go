@@ -8,7 +8,11 @@ import (
 )
 
 func (s *Server) adminListUserGroups(w http.ResponseWriter, r *http.Request, u *store.User) {
-	list, err := s.store.ListUserGroups(r.Context())
+	org, ok := s.listOrg(w, r, u)
+	if !ok {
+		return
+	}
+	list, err := s.store.ListUserGroups(r.Context(), org)
 	if err != nil {
 		s.writeStoreError(w, err)
 		return
@@ -22,12 +26,24 @@ func (s *Server) adminSaveUserGroup(w http.ResponseWriter, r *http.Request, u *s
 		Name         string   `json:"name"`
 		Note         string   `json:"note"`
 		DeviceGroups []string `json:"device_groups"`
+		OrgGUID      string   `json:"org_guid"` // on create, server staff only
 	}
 	if err := readJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "Invalid request")
 		return
 	}
-	g, err := s.store.SaveUserGroup(r.Context(), r.PathValue("guid"), req.Name, req.Note, req.DeviceGroups)
+	var org int64
+	if guid := r.PathValue("guid"); guid != "" {
+		if _, ok := s.scopedUserGroup(w, r, u, guid); !ok {
+			return
+		}
+	} else {
+		var ok bool
+		if org, ok = s.targetOrg(w, r, u, req.OrgGUID); !ok {
+			return
+		}
+	}
+	g, err := s.store.SaveUserGroup(r.Context(), org, r.PathValue("guid"), req.Name, req.Note, req.DeviceGroups)
 	switch {
 	case errors.Is(err, store.ErrConflict):
 		writeError(w, http.StatusConflict, "A user group with this name already exists")
@@ -41,6 +57,9 @@ func (s *Server) adminSaveUserGroup(w http.ResponseWriter, r *http.Request, u *s
 }
 
 func (s *Server) adminDeleteUserGroup(w http.ResponseWriter, r *http.Request, u *store.User) {
+	if _, ok := s.scopedUserGroup(w, r, u, r.PathValue("guid")); !ok {
+		return
+	}
 	if err := s.store.DeleteUserGroup(r.Context(), r.PathValue("guid")); err != nil {
 		s.writeStoreError(w, err)
 		return

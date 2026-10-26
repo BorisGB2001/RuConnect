@@ -10,7 +10,11 @@ import (
 // Panel API for strategies: named client option sets pushed via heartbeat.
 
 func (s *Server) adminListStrategies(w http.ResponseWriter, r *http.Request, u *store.User) {
-	list, err := s.store.ListStrategies(r.Context())
+	org, ok := s.listOrg(w, r, u)
+	if !ok {
+		return
+	}
+	list, err := s.store.ListStrategies(r.Context(), org)
 	if err != nil {
 		s.writeStoreError(w, err)
 		return
@@ -18,18 +22,19 @@ func (s *Server) adminListStrategies(w http.ResponseWriter, r *http.Request, u *
 	writeList(w, len(list), list)
 }
 
-func strategyInput(w http.ResponseWriter, r *http.Request) (store.StrategyInput, bool) {
+func strategyInput(w http.ResponseWriter, r *http.Request) (store.StrategyInput, string, bool) {
 	var req struct {
 		Name      string            `json:"name"`
 		Note      string            `json:"note"`
 		Options   map[string]string `json:"options"`
 		IsDefault bool              `json:"is_default"`
+		OrgGUID   string            `json:"org_guid"` // on create, server staff only
 	}
 	if err := readJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "Invalid request: options must be an object of string values")
-		return store.StrategyInput{}, false
+		return store.StrategyInput{}, "", false
 	}
-	return store.StrategyInput{Name: req.Name, Note: req.Note, Options: req.Options, IsDefault: req.IsDefault}, true
+	return store.StrategyInput{Name: req.Name, Note: req.Note, Options: req.Options, IsDefault: req.IsDefault}, req.OrgGUID, true
 }
 
 func (s *Server) writeStrategyResult(w http.ResponseWriter, v *store.Strategy, err error) {
@@ -46,8 +51,11 @@ func (s *Server) writeStrategyResult(w http.ResponseWriter, v *store.Strategy, e
 }
 
 func (s *Server) adminCreateStrategy(w http.ResponseWriter, r *http.Request, u *store.User) {
-	in, ok := strategyInput(w, r)
+	in, orgGUID, ok := strategyInput(w, r)
 	if !ok {
+		return
+	}
+	if in.OrgID, ok = s.targetOrg(w, r, u, orgGUID); !ok {
 		return
 	}
 	v, err := s.store.CreateStrategy(r.Context(), in)
@@ -55,8 +63,11 @@ func (s *Server) adminCreateStrategy(w http.ResponseWriter, r *http.Request, u *
 }
 
 func (s *Server) adminUpdateStrategy(w http.ResponseWriter, r *http.Request, u *store.User) {
-	in, ok := strategyInput(w, r)
+	in, _, ok := strategyInput(w, r)
 	if !ok {
+		return
+	}
+	if _, ok := s.scopedStrategy(w, r, u, r.PathValue("guid")); !ok {
 		return
 	}
 	v, err := s.store.UpdateStrategy(r.Context(), r.PathValue("guid"), in)
@@ -64,6 +75,9 @@ func (s *Server) adminUpdateStrategy(w http.ResponseWriter, r *http.Request, u *
 }
 
 func (s *Server) adminDeleteStrategy(w http.ResponseWriter, r *http.Request, u *store.User) {
+	if _, ok := s.scopedStrategy(w, r, u, r.PathValue("guid")); !ok {
+		return
+	}
 	if err := s.store.DeleteStrategy(r.Context(), r.PathValue("guid")); err != nil {
 		s.writeStoreError(w, err)
 		return
@@ -71,14 +85,18 @@ func (s *Server) adminDeleteStrategy(w http.ResponseWriter, r *http.Request, u *
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
-// strategyID resolves an optional strategy guid ("" clears the assignment).
-func (s *Server) strategyID(w http.ResponseWriter, r *http.Request, guid string) (int64, bool) {
+// strategyID resolves an optional strategy guid ("" clears the
+// assignment); the strategy must belong to organization org.
+func (s *Server) strategyID(w http.ResponseWriter, r *http.Request, u *store.User, guid string, org int64) (int64, bool) {
 	if guid == "" {
 		return 0, true
 	}
-	st, err := s.store.StrategyByGUID(r.Context(), guid)
-	if err != nil {
-		s.writeStoreError(w, err)
+	st, ok := s.scopedStrategy(w, r, u, guid)
+	if !ok {
+		return 0, false
+	}
+	if st.OrgID != org {
+		writeError(w, http.StatusBadRequest, "The strategy belongs to another organization")
 		return 0, false
 	}
 	return st.ID, true
@@ -92,7 +110,11 @@ func (s *Server) adminSetDeviceStrategy(w http.ResponseWriter, r *http.Request, 
 		writeError(w, http.StatusBadRequest, "Invalid request")
 		return
 	}
-	id, ok := s.strategyID(w, r, req.StrategyGUID)
+	dev, ok := s.scopedDevice(w, r, u, r.PathValue("id"))
+	if !ok {
+		return
+	}
+	id, ok := s.strategyID(w, r, u, req.StrategyGUID, dev.OrgID)
 	if !ok {
 		return
 	}
@@ -111,7 +133,11 @@ func (s *Server) adminSetGroupStrategy(w http.ResponseWriter, r *http.Request, u
 		writeError(w, http.StatusBadRequest, "Invalid request")
 		return
 	}
-	id, ok := s.strategyID(w, r, req.StrategyGUID)
+	grp, ok := s.scopedGroup(w, r, u, r.PathValue("guid"))
+	if !ok {
+		return
+	}
+	id, ok := s.strategyID(w, r, u, req.StrategyGUID, grp.OrgID)
 	if !ok {
 		return
 	}

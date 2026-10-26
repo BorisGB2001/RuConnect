@@ -97,6 +97,12 @@ func (r resp) decode(t *testing.T, v any) {
 // request carries Content-Type: application/json.
 func (e *env) do(method, path, token string, body any) resp {
 	e.t.Helper()
+	return e.doHost(method, path, token, "", body)
+}
+
+// doHost is do with the request's Host header set (an organization's domain).
+func (e *env) doHost(method, path, token, host string, body any) resp {
+	e.t.Helper()
 	var rd io.Reader = http.NoBody
 	switch b := body.(type) {
 	case nil:
@@ -116,6 +122,9 @@ func (e *env) do(method, path, token string, body any) resp {
 		e.t.Fatalf("new request: %v", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
+	if host != "" {
+		req.Host = host
+	}
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}

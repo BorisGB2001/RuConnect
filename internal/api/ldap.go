@@ -44,7 +44,7 @@ func (s *Server) ldapLogin(r *http.Request, local *store.User, username, passwor
 	switch {
 	case errors.Is(err, store.ErrNotFound):
 		u, err = s.store.CreateUser(ctx, store.UserInput{Name: id.Name, DisplayName: id.DisplayName, Email: id.Email,
-			Status: store.UserNormal, IsAdmin: isAdmin})
+			Status: store.UserNormal, IsAdmin: isAdmin, OrgID: s.hostOrg(r)})
 		if err == nil {
 			s.log.Info("user created from LDAP", "user", id.Name, "dn", id.DN)
 		}

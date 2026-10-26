@@ -167,7 +167,7 @@ func TestOIDCLoginAutoCreate(t *testing.T) {
 	if u, _ := res["user"].(map[string]any); u["name"] != "jane" {
 		t.Fatalf("second login: %v", res)
 	}
-	n, _ := st.CountUsers(context.Background())
+	n, _ := st.CountUsers(context.Background(), 0)
 	if n != 1 {
 		t.Fatalf("users = %d, want 1", n)
 	}

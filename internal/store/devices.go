@@ -30,6 +30,9 @@ type Device struct {
 	ServerSlug   string `json:"server_slug"`
 	StrategyName string `json:"strategy_name"`
 	StrategyGUID string `json:"strategy_guid"`
+	OrgID        int64  `json:"-"`
+	OrgGUID      string `json:"org_guid"`
+	OrgName      string `json:"org_name"`
 	Conns        int    `json:"conns"`
 	LastOnlineAt int64  `json:"last_online_at"`
 	CreatedAt    int64  `json:"created_at"`
@@ -37,17 +40,19 @@ type Device struct {
 
 const deviceCols = `d.id, d.guid, d.uuid, d.hostname, d.username, d.os, d.cpu, d.memory, d.version, d.note, d.ip,
 	d.user_id, COALESCE(u.name, ''), d.group_id, COALESCE(g.name, ''), d.server_id, COALESCE(sv.name, ''), COALESCE(sv.slug, ''), COALESCE(st.name, ''),
-	COALESCE(u.guid, ''), COALESCE(g.guid, ''), COALESCE(st.guid, ''), d.conns, d.last_online_at, d.created_at`
+	COALESCE(u.guid, ''), COALESCE(g.guid, ''), COALESCE(st.guid, ''), IFNULL(d.org_id, 0), COALESCE(o.guid, ''), COALESCE(o.name, ''),
+	d.conns, d.last_online_at, d.created_at`
 
 const deviceFrom = ` FROM devices d LEFT JOIN users u ON u.id = d.user_id LEFT JOIN device_groups g ON g.id = d.group_id
-	LEFT JOIN servers sv ON sv.id = d.server_id LEFT JOIN strategies st ON st.id = d.strategy_id`
+	LEFT JOIN servers sv ON sv.id = d.server_id LEFT JOIN strategies st ON st.id = d.strategy_id
+	LEFT JOIN organizations o ON o.id = d.org_id`
 
 func scanDevice(row interface{ Scan(...any) error }) (*Device, error) {
 	var d Device
 	var uid, gid, sid sql.NullInt64
 	err := row.Scan(&d.ID, &d.GUID, &d.UUID, &d.Hostname, &d.Username, &d.OS, &d.CPU, &d.Memory, &d.Version,
 		&d.Note, &d.IP, &uid, &d.UserName, &gid, &d.GroupName, &sid, &d.ServerName, &d.ServerSlug, &d.StrategyName, &d.UserGUID, &d.GroupGUID, &d.StrategyGUID,
-		&d.Conns, &d.LastOnlineAt, &d.CreatedAt)
+		&d.OrgID, &d.OrgGUID, &d.OrgName, &d.Conns, &d.LastOnlineAt, &d.CreatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -131,6 +136,7 @@ type DeviceFilter struct {
 	Search       string
 	// OnlineSince, when non-zero, keeps only devices seen at or after this unix time.
 	OnlineSince int64
+	Org         int64 // organization (0: any, NoOrg: none)
 }
 
 func (s *Store) ListDevices(ctx context.Context, f DeviceFilter, p Page) ([]*Device, int, error) {
@@ -151,6 +157,11 @@ func (s *Store) ListDevices(ctx context.Context, f DeviceFilter, p Page) ([]*Dev
 	if f.ServerID != 0 {
 		where = append(where, "d.server_id = ?")
 		args = append(args, f.ServerID)
+	}
+	if f.Org != 0 {
+		c, a := orgCond("d.org_id", f.Org)
+		where = append(where, c)
+		args = append(args, a...)
 	}
 	if f.OnlineSince != 0 {
 		where = append(where, "d.last_online_at >= ?")
@@ -252,10 +263,34 @@ func (s *Store) DeleteDevice(ctx context.Context, id string) error {
 	return nil
 }
 
-func (s *Store) CountDevices(ctx context.Context, onlineSince int64) (total, online int, err error) {
-	err = s.db.QueryRowContext(ctx, `SELECT COUNT(*), COALESCE(SUM(last_online_at >= ?), 0) FROM devices`, onlineSince).
-		Scan(&total, &online)
+// CountDevices counts the devices of an organization (0: all).
+func (s *Store) CountDevices(ctx context.Context, org, onlineSince int64) (total, online int, err error) {
+	cond, args := orgCond("org_id", org)
+	err = s.db.QueryRowContext(ctx, `SELECT COUNT(*), COALESCE(SUM(last_online_at >= ?), 0) FROM devices WHERE `+cond,
+		append([]any{onlineSince}, args...)...).Scan(&total, &online)
 	return
+}
+
+// ClaimDeviceOrganization puts a device without an organization into org.
+// Devices join the organization whose domain they first report to; only
+// an administrator moves them afterwards.
+func (s *Store) ClaimDeviceOrganization(ctx context.Context, id string, org int64) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE devices SET org_id = ? WHERE id = ? AND org_id IS NULL`, nullID(org), id)
+	return err
+}
+
+// SetDeviceOrganization moves a device to another organization (0: none),
+// dropping its owner, group and strategy, which belong to the old one.
+func (s *Store) SetDeviceOrganization(ctx context.Context, id string, org int64) error {
+	res, err := s.db.ExecContext(ctx, `UPDATE devices SET org_id = ?, user_id = NULL, group_id = NULL, strategy_id = NULL,
+		updated_at = ? WHERE id = ?`, nullID(org), now(), id)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 func nullID(id int64) any {
@@ -272,13 +307,14 @@ type DeviceGroup struct {
 	Note         string `json:"note"`
 	StrategyName string `json:"strategy_name"`
 	StrategyGUID string `json:"strategy_guid"`
+	OrgID        int64  `json:"-"`
 	Devices      int    `json:"devices"`
 	CreatedAt    int64  `json:"created_at"`
 }
 
 func scanGroup(row interface{ Scan(...any) error }) (*DeviceGroup, error) {
 	var g DeviceGroup
-	err := row.Scan(&g.ID, &g.GUID, &g.Name, &g.Note, &g.StrategyName, &g.StrategyGUID, &g.Devices, &g.CreatedAt)
+	err := row.Scan(&g.ID, &g.GUID, &g.Name, &g.Note, &g.StrategyName, &g.StrategyGUID, &g.OrgID, &g.Devices, &g.CreatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -287,22 +323,24 @@ func scanGroup(row interface{ Scan(...any) error }) (*DeviceGroup, error) {
 
 const groupSelect = `SELECT g.id, g.guid, g.name, g.note,
 	COALESCE((SELECT name FROM strategies st WHERE st.id = g.strategy_id), ''),
-	COALESCE((SELECT guid FROM strategies st WHERE st.id = g.strategy_id), ''), (SELECT COUNT(*) FROM devices d WHERE d.group_id = g.id), g.created_at FROM device_groups g`
+	COALESCE((SELECT guid FROM strategies st WHERE st.id = g.strategy_id), ''), IFNULL(g.org_id, 0), (SELECT COUNT(*) FROM devices d WHERE d.group_id = g.id), g.created_at FROM device_groups g`
 
-func (s *Store) CreateDeviceGroup(ctx context.Context, name, note string) (*DeviceGroup, error) {
+// CreateDeviceGroup creates a group in an organization (0: none).
+func (s *Store) CreateDeviceGroup(ctx context.Context, org int64, name, note string) (*DeviceGroup, error) {
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return nil, errors.New("group name is required")
 	}
-	_, err := s.db.ExecContext(ctx, `INSERT INTO device_groups (guid, name, note, created_at) VALUES (?, ?, ?, ?)`,
-		NewGUID(), name, note, now())
+	guid := NewGUID()
+	_, err := s.db.ExecContext(ctx, `INSERT INTO device_groups (guid, name, note, org_id, created_at) VALUES (?, ?, ?, ?, ?)`,
+		guid, name, note, nullID(org), now())
 	if isUniqueErr(err) {
 		return nil, ErrConflict
 	}
 	if err != nil {
 		return nil, err
 	}
-	return s.DeviceGroupByName(ctx, name)
+	return s.DeviceGroupByGUID(ctx, guid)
 }
 
 func (s *Store) UpdateDeviceGroup(ctx context.Context, guid, name, note string) (*DeviceGroup, error) {
@@ -334,8 +372,9 @@ func (s *Store) DeleteDeviceGroup(ctx context.Context, guid string) error {
 	return nil
 }
 
-func (s *Store) DeviceGroupByName(ctx context.Context, name string) (*DeviceGroup, error) {
-	return scanGroup(s.db.QueryRowContext(ctx, groupSelect+` WHERE g.name = ?`, strings.TrimSpace(name)))
+// DeviceGroupByName finds a group by name within an organization (0: none).
+func (s *Store) DeviceGroupByName(ctx context.Context, org int64, name string) (*DeviceGroup, error) {
+	return scanGroup(s.db.QueryRowContext(ctx, groupSelect+` WHERE g.name = ? AND IFNULL(g.org_id, 0) = ?`, strings.TrimSpace(name), org))
 }
 
 func (s *Store) DeviceGroupByGUID(ctx context.Context, guid string) (*DeviceGroup, error) {
@@ -348,11 +387,11 @@ const accessibleGroups = `(SELECT a.device_group_id FROM user_group_access a JOI
 
 // ListDeviceGroups returns all groups, or, when userID is non-zero, the groups
 // that user can reach: granted to their user group, or holding their devices.
-func (s *Store) ListDeviceGroups(ctx context.Context, userID int64, p Page) ([]*DeviceGroup, int, error) {
-	cond := "1=1"
-	var args []any
+// org restricts the list to an organization (0: any, NoOrg: none).
+func (s *Store) ListDeviceGroups(ctx context.Context, org, userID int64, p Page) ([]*DeviceGroup, int, error) {
+	cond, args := orgCond("g.org_id", org)
 	if userID != 0 {
-		cond = "(EXISTS (SELECT 1 FROM devices d WHERE d.group_id = g.id AND d.user_id = ?) OR g.id IN " + accessibleGroups + ")"
+		cond += " AND (EXISTS (SELECT 1 FROM devices d WHERE d.group_id = g.id AND d.user_id = ?) OR g.id IN " + accessibleGroups + ")"
 		args = append(args, userID, userID)
 	}
 	var total int

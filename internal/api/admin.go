@@ -16,6 +16,12 @@ func (s *Server) adminRoutes(mux *http.ServeMux) {
 	h := func(pattern string, fn userHandler) { mux.HandleFunc(pattern, s.withPerm(routePerm(pattern), fn)) }
 
 	h("GET /api/admin/overview", s.adminOverview)
+	h("GET /api/admin/organizations", s.adminListOrgs)
+	h("POST /api/admin/organizations", s.adminSaveOrg)
+	h("PUT /api/admin/organizations/{guid}", s.adminSaveOrg)
+	h("DELETE /api/admin/organizations/{guid}", s.adminDeleteOrg)
+	h("PUT /api/admin/devices/{id}/organization", s.adminSetDeviceOrg)
+	h("PUT /api/admin/users/{guid}/organization", s.adminSetUserOrg)
 	h("PUT /api/admin/password", s.adminChangePassword)
 	h("POST /api/admin/tokens", s.adminCreateToken)
 	h("GET /api/admin/tokens", s.adminListTokens)
@@ -79,25 +85,43 @@ func (s *Server) onlineSince() int64 { return time.Now().Add(-s.cfg.OnlineTimeou
 
 func (s *Server) adminOverview(w http.ResponseWriter, r *http.Request, u *store.User) {
 	ctx := r.Context()
-	users, err := s.store.CountUsers(ctx)
+	org, ok := s.listOrg(w, r, u)
+	if !ok {
+		return
+	}
+	users, err := s.store.CountUsers(ctx, org)
 	if err != nil {
 		s.writeStoreError(w, err)
 		return
 	}
-	total, online, err := s.store.CountDevices(ctx, s.onlineSince())
+	total, online, err := s.store.CountDevices(ctx, org, s.onlineSince())
 	if err != nil {
 		s.writeStoreError(w, err)
 		return
+	}
+	idServer, apiServer := s.cfg.IDServer, s.cfg.APIServer
+	var orgInfo *store.Organization
+	if u.OrgID != 0 {
+		// Organization staff connect clients through their own domain.
+		if o, err := s.store.OrganizationByID(ctx, u.OrgID); err == nil {
+			orgInfo = o
+			if len(o.Domains) > 0 {
+				idServer = o.Domains[0]
+				apiServer = s.orgAPIServer(r, o.Domains[0])
+			}
+		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"version":        Version,
 		"users":          users,
 		"devices":        total,
 		"devices_online": online,
+		"organization":   orgInfo,
+		"server_admin":   isServerAdmin(u),
 		"server": map[string]string{
-			"id_server":    s.cfg.IDServer,
+			"id_server":    idServer,
 			"relay_server": s.cfg.RelayServer,
-			"api_server":   s.cfg.APIServer,
+			"api_server":   apiServer,
 			"key":          s.publicKey(),
 		},
 	})
@@ -154,7 +178,7 @@ func (s *Server) adminCreateToken(w http.ResponseWriter, r *http.Request, u *sto
 }
 
 func (s *Server) adminListTokens(w http.ResponseWriter, r *http.Request, u *store.User) {
-	list, err := s.store.ListTokens(r.Context(), store.TokenDeploy)
+	list, err := s.store.ListTokens(r.Context(), store.TokenDeploy, u.OrgID)
 	if err != nil {
 		s.writeStoreError(w, err)
 		return
@@ -163,7 +187,7 @@ func (s *Server) adminListTokens(w http.ResponseWriter, r *http.Request, u *stor
 }
 
 func (s *Server) adminRevokeToken(w http.ResponseWriter, r *http.Request, u *store.User) {
-	if err := s.store.RevokeToken(r.Context(), r.PathValue("id")); err != nil {
+	if err := s.store.RevokeToken(r.Context(), r.PathValue("id"), u.OrgID); err != nil {
 		s.writeStoreError(w, err)
 		return
 	}
@@ -180,6 +204,7 @@ type userRequest struct {
 	IsAdmin     bool    `json:"is_admin"`
 	GroupGUID   *string `json:"group_guid"` // user group; "" removes the user from it
 	Role        *string `json:"role"`       // panel role: "", "auditor" or "helpdesk"
+	OrgGUID     string  `json:"org_guid"`   // organization on create (server staff only)
 }
 
 // applyUserGroup sets the user's group when the request names one.
@@ -192,6 +217,10 @@ func (s *Server) applyUserGroup(w http.ResponseWriter, r *http.Request, u *store
 		g, err := s.store.UserGroupByGUID(r.Context(), *groupGUID)
 		if err != nil {
 			s.writeStoreError(w, err)
+			return false
+		}
+		if g.OrgID != u.OrgID {
+			writeError(w, http.StatusBadRequest, "The user group belongs to another organization")
 			return false
 		}
 		gid = g.ID
@@ -218,7 +247,11 @@ func (q userRequest) input() store.UserInput {
 }
 
 func (s *Server) adminListUsers(w http.ResponseWriter, r *http.Request, u *store.User) {
-	users, total, err := s.store.ListUsers(r.Context(), store.UserFilter{Search: r.URL.Query().Get("q")}, pageOf(r))
+	org, ok := s.listOrg(w, r, u)
+	if !ok {
+		return
+	}
+	users, total, err := s.store.ListUsers(r.Context(), store.UserFilter{Search: r.URL.Query().Get("q"), Org: org}, pageOf(r))
 	if err != nil {
 		s.writeStoreError(w, err)
 		return
@@ -240,7 +273,12 @@ func (s *Server) adminCreateUser(w http.ResponseWriter, r *http.Request, u *stor
 		writeError(w, http.StatusBadRequest, "Invalid status or role")
 		return
 	}
-	nu, err := s.store.CreateUser(r.Context(), req.input())
+	in := req.input()
+	var ok bool
+	if in.OrgID, ok = s.targetOrg(w, r, u, req.OrgGUID); !ok {
+		return
+	}
+	nu, err := s.store.CreateUser(r.Context(), in)
 	if errors.Is(err, store.ErrConflict) {
 		writeError(w, http.StatusConflict, "A user with this name already exists")
 		return
@@ -271,13 +309,12 @@ func (s *Server) adminUpdateUser(w http.ResponseWriter, r *http.Request, u *stor
 		writeError(w, http.StatusBadRequest, "Invalid status or role")
 		return
 	}
-	target, err := s.store.UserByGUID(r.Context(), r.PathValue("guid"))
-	if err != nil {
-		s.writeStoreError(w, err)
+	target, ok := s.scopedUser(w, r, u, r.PathValue("guid"))
+	if !ok {
 		return
 	}
 	in := req.input()
-	if target.IsAdmin && (!in.IsAdmin || in.Status != store.UserNormal) && !s.otherAdminsExist(w, r, target.ID) {
+	if target.IsAdmin && (!in.IsAdmin || in.Status != store.UserNormal) && !s.otherAdminsExist(w, r, target) {
 		return
 	}
 	nu, err := s.store.UpdateUser(r.Context(), target.GUID, in)
@@ -296,9 +333,28 @@ func (s *Server) adminUpdateUser(w http.ResponseWriter, r *http.Request, u *stor
 	writeJSON(w, http.StatusOK, nu)
 }
 
-// otherAdminsExist refuses changes that would leave the server without an administrator.
-func (s *Server) otherAdminsExist(w http.ResponseWriter, r *http.Request, exclude int64) bool {
-	n, err := s.store.CountActiveAdmins(r.Context(), exclude)
+// scopedUser loads a user the panel user may manage.
+func (s *Server) scopedUser(w http.ResponseWriter, r *http.Request, u *store.User, guid string) (*store.User, bool) {
+	target, err := s.store.UserByGUID(r.Context(), guid)
+	if errors.Is(err, store.ErrNotFound) || err == nil && !inScope(u, target.OrgID) {
+		notFound(w)
+		return nil, false
+	}
+	if err != nil {
+		s.writeStoreError(w, err)
+		return nil, false
+	}
+	return target, true
+}
+
+// otherAdminsExist refuses changes that would leave the server without an
+// administrator. Only server administrators count: organizations may be
+// left without one, server administrators still manage them.
+func (s *Server) otherAdminsExist(w http.ResponseWriter, r *http.Request, target *store.User) bool {
+	if target.OrgID != 0 {
+		return true
+	}
+	n, err := s.store.CountActiveAdmins(r.Context(), store.NoOrg, target.ID)
 	if err != nil {
 		s.writeStoreError(w, err)
 		return false
@@ -311,12 +367,11 @@ func (s *Server) otherAdminsExist(w http.ResponseWriter, r *http.Request, exclud
 }
 
 func (s *Server) adminDeleteUser(w http.ResponseWriter, r *http.Request, u *store.User) {
-	target, err := s.store.UserByGUID(r.Context(), r.PathValue("guid"))
-	if err != nil {
-		s.writeStoreError(w, err)
+	target, ok := s.scopedUser(w, r, u, r.PathValue("guid"))
+	if !ok {
 		return
 	}
-	if target.IsAdmin && !s.otherAdminsExist(w, r, target.ID) {
+	if target.IsAdmin && !s.otherAdminsExist(w, r, target) {
 		return
 	}
 	if err := s.store.DeleteUser(r.Context(), target.GUID); err != nil {
@@ -328,9 +383,8 @@ func (s *Server) adminDeleteUser(w http.ResponseWriter, r *http.Request, u *stor
 }
 
 func (s *Server) adminEnableTOTP(w http.ResponseWriter, r *http.Request, u *store.User) {
-	target, err := s.store.UserByGUID(r.Context(), r.PathValue("guid"))
-	if err != nil {
-		s.writeStoreError(w, err)
+	target, ok := s.scopedUser(w, r, u, r.PathValue("guid"))
+	if !ok {
 		return
 	}
 	secret := totp.NewSecret()
@@ -342,9 +396,8 @@ func (s *Server) adminEnableTOTP(w http.ResponseWriter, r *http.Request, u *stor
 }
 
 func (s *Server) adminDisableTOTP(w http.ResponseWriter, r *http.Request, u *store.User) {
-	target, err := s.store.UserByGUID(r.Context(), r.PathValue("guid"))
-	if err != nil {
-		s.writeStoreError(w, err)
+	target, ok := s.scopedUser(w, r, u, r.PathValue("guid"))
+	if !ok {
 		return
 	}
 	if err := s.store.SetTOTPSecret(r.Context(), target.ID, ""); err != nil {
@@ -361,19 +414,21 @@ type adminDevice struct {
 
 func (s *Server) adminListDevices(w http.ResponseWriter, r *http.Request, u *store.User) {
 	q := r.URL.Query()
-	f := store.DeviceFilter{Search: q.Get("q")}
+	org, ok := s.listOrg(w, r, u)
+	if !ok {
+		return
+	}
+	f := store.DeviceFilter{Search: q.Get("q"), Org: org}
 	if g := q.Get("group"); g != "" {
-		grp, err := s.store.DeviceGroupByGUID(r.Context(), g)
-		if err != nil {
-			s.writeStoreError(w, err)
+		grp, ok := s.scopedGroup(w, r, u, g)
+		if !ok {
 			return
 		}
 		f.GroupID = grp.ID
 	}
 	if ug := q.Get("user"); ug != "" {
-		usr, err := s.store.UserByGUID(r.Context(), ug)
-		if err != nil {
-			s.writeStoreError(w, err)
+		usr, ok := s.scopedUser(w, r, u, ug)
+		if !ok {
 			return
 		}
 		f.UserID = usr.ID
@@ -404,13 +459,20 @@ func (s *Server) adminUpdateDevice(w http.ResponseWriter, r *http.Request, u *st
 		writeError(w, http.StatusBadRequest, "Invalid request")
 		return
 	}
+	dev, ok := s.scopedDevice(w, r, u, r.PathValue("id"))
+	if !ok {
+		return
+	}
 	up := store.DeviceUpdate{Note: req.Note}
 	if req.UserGUID != nil {
 		var id int64
 		if *req.UserGUID != "" {
-			usr, err := s.store.UserByGUID(r.Context(), *req.UserGUID)
-			if err != nil {
-				s.writeStoreError(w, err)
+			usr, ok := s.scopedUser(w, r, u, *req.UserGUID)
+			if !ok {
+				return
+			}
+			if usr.OrgID != dev.OrgID {
+				writeError(w, http.StatusBadRequest, "The user belongs to another organization")
 				return
 			}
 			id = usr.ID
@@ -420,9 +482,12 @@ func (s *Server) adminUpdateDevice(w http.ResponseWriter, r *http.Request, u *st
 	if req.GroupGUID != nil {
 		var id int64
 		if *req.GroupGUID != "" {
-			grp, err := s.store.DeviceGroupByGUID(r.Context(), *req.GroupGUID)
-			if err != nil {
-				s.writeStoreError(w, err)
+			grp, ok := s.scopedGroup(w, r, u, *req.GroupGUID)
+			if !ok {
+				return
+			}
+			if grp.OrgID != dev.OrgID {
+				writeError(w, http.StatusBadRequest, "The group belongs to another organization")
 				return
 			}
 			id = grp.ID
@@ -442,6 +507,9 @@ func (s *Server) adminUpdateDevice(w http.ResponseWriter, r *http.Request, u *st
 }
 
 func (s *Server) adminDeleteDevice(w http.ResponseWriter, r *http.Request, u *store.User) {
+	if _, ok := s.scopedDevice(w, r, u, r.PathValue("id")); !ok {
+		return
+	}
 	if err := s.store.DeleteDevice(r.Context(), r.PathValue("id")); err != nil {
 		s.writeStoreError(w, err)
 		return
@@ -451,18 +519,26 @@ func (s *Server) adminDeleteDevice(w http.ResponseWriter, r *http.Request, u *st
 
 func (s *Server) adminDisconnectDevice(w http.ResponseWriter, r *http.Request, u *store.User) {
 	id := r.PathValue("id")
+	if _, ok := s.scopedDevice(w, r, u, id); !ok {
+		return
+	}
 	n := s.sessions.closeAll(id)
 	s.log.Info("disconnect requested", "device", id, "sessions", n, "by", u.Name)
 	writeJSON(w, http.StatusOK, map[string]int{"sessions": n})
 }
 
 type groupRequest struct {
-	Name string `json:"name"`
-	Note string `json:"note"`
+	Name    string `json:"name"`
+	Note    string `json:"note"`
+	OrgGUID string `json:"org_guid"` // on create, server staff only
 }
 
 func (s *Server) adminListGroups(w http.ResponseWriter, r *http.Request, u *store.User) {
-	groups, total, err := s.store.ListDeviceGroups(r.Context(), 0, pageOf(r))
+	org, ok := s.listOrg(w, r, u)
+	if !ok {
+		return
+	}
+	groups, total, err := s.store.ListDeviceGroups(r.Context(), org, 0, pageOf(r))
 	if err != nil {
 		s.writeStoreError(w, err)
 		return
@@ -476,7 +552,11 @@ func (s *Server) adminCreateGroup(w http.ResponseWriter, r *http.Request, u *sto
 		writeError(w, http.StatusBadRequest, "Group name is required")
 		return
 	}
-	g, err := s.store.CreateDeviceGroup(r.Context(), req.Name, req.Note)
+	org, ok := s.targetOrg(w, r, u, req.OrgGUID)
+	if !ok {
+		return
+	}
+	g, err := s.store.CreateDeviceGroup(r.Context(), org, req.Name, req.Note)
 	if err != nil {
 		s.writeStoreError(w, err)
 		return
@@ -490,6 +570,9 @@ func (s *Server) adminUpdateGroup(w http.ResponseWriter, r *http.Request, u *sto
 		writeError(w, http.StatusBadRequest, "Group name is required")
 		return
 	}
+	if _, ok := s.scopedGroup(w, r, u, r.PathValue("guid")); !ok {
+		return
+	}
 	g, err := s.store.UpdateDeviceGroup(r.Context(), r.PathValue("guid"), req.Name, req.Note)
 	if err != nil {
 		s.writeStoreError(w, err)
@@ -499,6 +582,9 @@ func (s *Server) adminUpdateGroup(w http.ResponseWriter, r *http.Request, u *sto
 }
 
 func (s *Server) adminDeleteGroup(w http.ResponseWriter, r *http.Request, u *store.User) {
+	if _, ok := s.scopedGroup(w, r, u, r.PathValue("guid")); !ok {
+		return
+	}
 	if err := s.store.DeleteDeviceGroup(r.Context(), r.PathValue("guid")); err != nil {
 		s.writeStoreError(w, err)
 		return
@@ -513,20 +599,34 @@ type abRequest struct {
 	OwnerGUID string `json:"owner_guid"`
 }
 
-func (s *Server) abOwner(w http.ResponseWriter, r *http.Request, u *store.User, guid string) (int64, bool) {
+// abOwner resolves a book's owner; the book belongs to the owner's organization.
+func (s *Server) abOwner(w http.ResponseWriter, r *http.Request, u *store.User, guid string) (*store.User, bool) {
 	if guid == "" {
-		return u.ID, true
+		return u, true
 	}
-	owner, err := s.store.UserByGUID(r.Context(), guid)
+	return s.scopedUser(w, r, u, guid)
+}
+
+// scopedAB loads a shared book the panel user may manage.
+func (s *Server) scopedAB(w http.ResponseWriter, r *http.Request, u *store.User, guid string) (*store.AddressBook, bool) {
+	ab, err := s.store.ABByGUID(r.Context(), guid)
+	if errors.Is(err, store.ErrNotFound) || err == nil && !inScope(u, ab.OrgID) {
+		notFound(w)
+		return nil, false
+	}
 	if err != nil {
 		s.writeStoreError(w, err)
-		return 0, false
+		return nil, false
 	}
-	return owner.ID, true
+	return ab, true
 }
 
 func (s *Server) adminListABs(w http.ResponseWriter, r *http.Request, u *store.User) {
-	books, total, err := s.store.SharedABsForUser(r.Context(), nil, pageOf(r))
+	org, ok := s.listOrg(w, r, u)
+	if !ok {
+		return
+	}
+	books, total, err := s.store.SharedABsForUser(r.Context(), nil, org, pageOf(r))
 	if err != nil {
 		s.writeStoreError(w, err)
 		return
@@ -544,7 +644,7 @@ func (s *Server) adminCreateAB(w http.ResponseWriter, r *http.Request, u *store.
 	if !ok {
 		return
 	}
-	ab, err := s.store.CreateSharedAB(r.Context(), req.Name, owner, req.Note, req.Password)
+	ab, err := s.store.CreateSharedAB(r.Context(), owner.OrgID, req.Name, owner.ID, req.Note, req.Password)
 	if errors.Is(err, store.ErrConflict) {
 		writeError(w, http.StatusConflict, "An address book with this name already exists")
 		return
@@ -562,17 +662,21 @@ func (s *Server) adminUpdateAB(w http.ResponseWriter, r *http.Request, u *store.
 		writeError(w, http.StatusBadRequest, "Invalid request")
 		return
 	}
-	cur, err := s.store.ABByGUID(r.Context(), r.PathValue("guid"))
-	if err != nil {
-		s.writeStoreError(w, err)
+	cur, ok := s.scopedAB(w, r, u, r.PathValue("guid"))
+	if !ok {
 		return
 	}
 	owner := cur.OwnerID
 	if req.OwnerGUID != "" {
-		var ok bool
-		if owner, ok = s.abOwner(w, r, u, req.OwnerGUID); !ok {
+		o, ok := s.abOwner(w, r, u, req.OwnerGUID)
+		if !ok {
 			return
 		}
+		if o.OrgID != cur.OrgID {
+			writeError(w, http.StatusBadRequest, "The owner belongs to another organization")
+			return
+		}
+		owner = o.ID
 	}
 	ab, err := s.store.UpdateSharedAB(r.Context(), cur.GUID, req.Name, owner, req.Note, req.Password)
 	if err != nil {
@@ -583,6 +687,9 @@ func (s *Server) adminUpdateAB(w http.ResponseWriter, r *http.Request, u *store.
 }
 
 func (s *Server) adminDeleteAB(w http.ResponseWriter, r *http.Request, u *store.User) {
+	if _, ok := s.scopedAB(w, r, u, r.PathValue("guid")); !ok {
+		return
+	}
 	if err := s.store.DeleteAB(r.Context(), r.PathValue("guid")); err != nil {
 		s.writeStoreError(w, err)
 		return
@@ -591,9 +698,8 @@ func (s *Server) adminDeleteAB(w http.ResponseWriter, r *http.Request, u *store.
 }
 
 func (s *Server) adminListABRules(w http.ResponseWriter, r *http.Request, u *store.User) {
-	ab, err := s.store.ABByGUID(r.Context(), r.PathValue("guid"))
-	if err != nil {
-		s.writeStoreError(w, err)
+	ab, ok := s.scopedAB(w, r, u, r.PathValue("guid"))
+	if !ok {
 		return
 	}
 	rules, err := s.store.ListABRules(r.Context(), ab.ID)
@@ -613,18 +719,20 @@ func (s *Server) adminSetABRule(w http.ResponseWriter, r *http.Request, u *store
 		writeError(w, http.StatusBadRequest, "Invalid request")
 		return
 	}
-	ab, err := s.store.ABByGUID(r.Context(), r.PathValue("guid"))
-	if err != nil {
-		s.writeStoreError(w, err)
+	ab, ok := s.scopedAB(w, r, u, r.PathValue("guid"))
+	if !ok {
 		return
 	}
 	if ab.Personal {
 		writeError(w, http.StatusBadRequest, "Personal address books cannot be shared")
 		return
 	}
-	target, err := s.store.UserByGUID(r.Context(), req.UserGUID)
-	if err != nil {
-		s.writeStoreError(w, err)
+	target, ok := s.scopedUser(w, r, u, req.UserGUID)
+	if !ok {
+		return
+	}
+	if target.OrgID != ab.OrgID {
+		writeError(w, http.StatusBadRequest, "The user belongs to another organization")
 		return
 	}
 	if err := s.store.SetABRule(r.Context(), ab.ID, target.ID, req.Rule); err != nil {
@@ -635,9 +743,8 @@ func (s *Server) adminSetABRule(w http.ResponseWriter, r *http.Request, u *store
 }
 
 func (s *Server) adminListABPeers(w http.ResponseWriter, r *http.Request, u *store.User) {
-	ab, err := s.store.ABByGUID(r.Context(), r.PathValue("guid"))
-	if err != nil {
-		s.writeStoreError(w, err)
+	ab, ok := s.scopedAB(w, r, u, r.PathValue("guid"))
+	if !ok {
 		return
 	}
 	peers, total, err := s.store.ListABPeers(r.Context(), ab.ID, pageOf(r))
@@ -651,19 +758,24 @@ func (s *Server) adminListABPeers(w http.ResponseWriter, r *http.Request, u *sto
 	writeList(w, total, peers)
 }
 
-func auditFilter(r *http.Request) store.AuditFilter {
+func (s *Server) auditFilter(w http.ResponseWriter, r *http.Request, u *store.User) (store.AuditFilter, bool) {
 	q := r.URL.Query()
 	from, _ := strconv.ParseInt(q.Get("from"), 10, 64)
 	to, _ := strconv.ParseInt(q.Get("to"), 10, 64)
-	return store.AuditFilter{DeviceID: q.Get("device_id"), PeerID: q.Get("peer_id"), From: from, To: to}
+	org, ok := s.listOrg(w, r, u)
+	return store.AuditFilter{DeviceID: q.Get("device_id"), PeerID: q.Get("peer_id"), From: from, To: to, Org: org}, ok
 }
 
 func (s *Server) adminAuditConns(w http.ResponseWriter, r *http.Request, u *store.User) {
-	if wantCSV(r) {
-		s.exportConns(w, r)
+	f, ok := s.auditFilter(w, r, u)
+	if !ok {
 		return
 	}
-	items, total, err := s.store.ListConnAudits(r.Context(), auditFilter(r), pageOf(r))
+	if wantCSV(r) {
+		s.exportConns(w, r, f)
+		return
+	}
+	items, total, err := s.store.ListConnAudits(r.Context(), f, pageOf(r))
 	if err != nil {
 		s.writeStoreError(w, err)
 		return
@@ -672,11 +784,15 @@ func (s *Server) adminAuditConns(w http.ResponseWriter, r *http.Request, u *stor
 }
 
 func (s *Server) adminAuditFiles(w http.ResponseWriter, r *http.Request, u *store.User) {
-	if wantCSV(r) {
-		s.exportFiles(w, r)
+	f, ok := s.auditFilter(w, r, u)
+	if !ok {
 		return
 	}
-	items, total, err := s.store.ListFileAudits(r.Context(), auditFilter(r), pageOf(r))
+	if wantCSV(r) {
+		s.exportFiles(w, r, f)
+		return
+	}
+	items, total, err := s.store.ListFileAudits(r.Context(), f, pageOf(r))
 	if err != nil {
 		s.writeStoreError(w, err)
 		return
@@ -685,11 +801,15 @@ func (s *Server) adminAuditFiles(w http.ResponseWriter, r *http.Request, u *stor
 }
 
 func (s *Server) adminAuditAlarms(w http.ResponseWriter, r *http.Request, u *store.User) {
-	if wantCSV(r) {
-		s.exportAlarms(w, r)
+	f, ok := s.auditFilter(w, r, u)
+	if !ok {
 		return
 	}
-	items, total, err := s.store.ListAlarmAudits(r.Context(), auditFilter(r), pageOf(r))
+	if wantCSV(r) {
+		s.exportAlarms(w, r, f)
+		return
+	}
+	items, total, err := s.store.ListAlarmAudits(r.Context(), f, pageOf(r))
 	if err != nil {
 		s.writeStoreError(w, err)
 		return

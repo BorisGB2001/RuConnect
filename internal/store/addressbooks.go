@@ -28,18 +28,19 @@ type AddressBook struct {
 	Password  string `json:"password"`
 	Peers     int    `json:"peers"`
 	CreatedAt int64  `json:"created_at"`
+	OrgID     int64  `json:"-"`
 	// Rule is the effective rule of the user the book was loaded for.
 	Rule int `json:"rule"`
 }
 
 const abSelect = `SELECT a.id, a.guid, a.name, a.owner_id, COALESCE(u.name, ''), COALESCE(u.guid, ''), a.personal, a.note, a.password,
-	(SELECT COUNT(*) FROM ab_peers p WHERE p.ab_id = a.id), a.created_at
+	(SELECT COUNT(*) FROM ab_peers p WHERE p.ab_id = a.id), a.created_at, IFNULL(a.org_id, 0)
 	FROM address_books a LEFT JOIN users u ON u.id = a.owner_id`
 
 func scanAB(row interface{ Scan(...any) error }) (*AddressBook, error) {
 	var a AddressBook
 	var personal int
-	err := row.Scan(&a.ID, &a.GUID, &a.Name, &a.OwnerID, &a.Owner, &a.OwnerGUID, &personal, &a.Note, &a.Password, &a.Peers, &a.CreatedAt)
+	err := row.Scan(&a.ID, &a.GUID, &a.Name, &a.OwnerID, &a.Owner, &a.OwnerGUID, &personal, &a.Note, &a.Password, &a.Peers, &a.CreatedAt, &a.OrgID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -73,8 +74,16 @@ func (s *Store) ABByGUID(ctx context.Context, guid string) (*AddressBook, error)
 	return scanAB(s.db.QueryRowContext(ctx, abSelect+` WHERE a.guid = ?`, guid))
 }
 
-func (s *Store) SharedABByName(ctx context.Context, name string) (*AddressBook, error) {
-	return scanAB(s.db.QueryRowContext(ctx, abSelect+` WHERE a.personal = 0 AND a.name = ? COLLATE NOCASE`, strings.TrimSpace(name)))
+// SharedABByName finds a shared book by name within an organization (0: none).
+func (s *Store) SharedABByName(ctx context.Context, org int64, name string) (*AddressBook, error) {
+	return scanAB(s.db.QueryRowContext(ctx, abSelect+` WHERE a.personal = 0 AND a.name = ? COLLATE NOCASE AND IFNULL(a.org_id, 0) = ?`,
+		strings.TrimSpace(name), org))
+}
+
+// adminOf reports whether u administers book a: server administrators
+// administer every book, organization administrators those of their organization.
+func adminOf(u *User, a *AddressBook) bool {
+	return u.IsAdmin && (u.OrgID == 0 || u.OrgID == a.OrgID)
 }
 
 // ABForUser loads a book and the user's effective rule on it.
@@ -91,7 +100,7 @@ func (s *Store) ABForUser(ctx context.Context, guid string, u *User) (*AddressBo
 			return nil, ErrNotFound
 		}
 		a.Rule = RuleFull
-	case a.OwnerID == u.ID || u.IsAdmin:
+	case a.OwnerID == u.ID || adminOf(u, a):
 		a.Rule = RuleFull
 	default:
 		err := s.db.QueryRowContext(ctx, `SELECT rule FROM ab_rules WHERE ab_id = ? AND user_id = ?`, a.ID, u.ID).Scan(&a.Rule)
@@ -105,14 +114,20 @@ func (s *Store) ABForUser(ctx context.Context, guid string, u *User) (*AddressBo
 	return a, nil
 }
 
-// SharedABsForUser lists the shared books visible to the user with their rules.
-// With u == nil all shared books are listed (panel).
-func (s *Store) SharedABsForUser(ctx context.Context, u *User, p Page) ([]*AddressBook, int, error) {
-	cond := "a.personal = 0"
-	var args []any
-	if u != nil && !u.IsAdmin {
-		cond += " AND (a.owner_id = ? OR EXISTS (SELECT 1 FROM ab_rules r WHERE r.ab_id = a.id AND r.user_id = ?))"
-		args = append(args, u.ID, u.ID)
+// SharedABsForUser lists the shared books visible to the user with their
+// rules. With u == nil all shared books of org (0: any, NoOrg: none) are
+// listed (panel).
+func (s *Store) SharedABsForUser(ctx context.Context, u *User, org int64, p Page) ([]*AddressBook, int, error) {
+	oc, args := orgCond("a.org_id", org)
+	cond := "a.personal = 0 AND " + oc
+	if u != nil {
+		if u.IsAdmin && u.OrgID != 0 {
+			cond += " AND (a.org_id = ? OR a.owner_id = ? OR EXISTS (SELECT 1 FROM ab_rules r WHERE r.ab_id = a.id AND r.user_id = ?))"
+			args = append(args, u.OrgID, u.ID, u.ID)
+		} else if !u.IsAdmin {
+			cond += " AND (a.owner_id = ? OR EXISTS (SELECT 1 FROM ab_rules r WHERE r.ab_id = a.id AND r.user_id = ?))"
+			args = append(args, u.ID, u.ID)
+		}
 	}
 	var total int
 	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM address_books a WHERE `+cond, args...).Scan(&total); err != nil {
@@ -138,7 +153,7 @@ func (s *Store) SharedABsForUser(ctx context.Context, u *User, p Page) ([]*Addre
 	}
 	for _, a := range out {
 		a.Rule = RuleFull
-		if u != nil && !u.IsAdmin && a.OwnerID != u.ID {
+		if u != nil && !adminOf(u, a) && a.OwnerID != u.ID {
 			if err := s.db.QueryRowContext(ctx, `SELECT rule FROM ab_rules WHERE ab_id = ? AND user_id = ?`, a.ID, u.ID).
 				Scan(&a.Rule); err != nil {
 				return nil, 0, err
@@ -148,7 +163,8 @@ func (s *Store) SharedABsForUser(ctx context.Context, u *User, p Page) ([]*Addre
 	return out, total, nil
 }
 
-func (s *Store) CreateSharedAB(ctx context.Context, name string, ownerID int64, note, password string) (*AddressBook, error) {
+// CreateSharedAB creates a shared book in an organization (0: none).
+func (s *Store) CreateSharedAB(ctx context.Context, org int64, name string, ownerID int64, note, password string) (*AddressBook, error) {
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return nil, errors.New("address book name is required")
@@ -158,8 +174,8 @@ func (s *Store) CreateSharedAB(ctx context.Context, name string, ownerID int64, 
 	}
 	t := now()
 	guid := NewGUID()
-	_, err := s.db.ExecContext(ctx, `INSERT INTO address_books (guid, name, owner_id, personal, note, password, created_at, updated_at)
-		VALUES (?, ?, ?, 0, ?, ?, ?, ?)`, guid, name, ownerID, note, password, t, t)
+	_, err := s.db.ExecContext(ctx, `INSERT INTO address_books (guid, name, owner_id, personal, note, password, org_id, created_at, updated_at)
+		VALUES (?, ?, ?, 0, ?, ?, ?, ?, ?)`, guid, name, ownerID, note, password, nullID(org), t, t)
 	if isUniqueErr(err) {
 		return nil, ErrConflict
 	}

@@ -327,7 +327,81 @@ CREATE TABLE rendezvous_peers (
 	updated_at INTEGER NOT NULL
 );
 `,
+	// 9: organizations (tenants). Names of groups, strategies and shared
+	// address books become unique per organization, which needs table
+	// rebuilds, so this migration runs with foreign keys off.
+	noFK + `
+CREATE TABLE organizations (
+	id         INTEGER PRIMARY KEY,
+	guid       TEXT NOT NULL UNIQUE,
+	name       TEXT NOT NULL UNIQUE COLLATE NOCASE,
+	note       TEXT NOT NULL DEFAULT '',
+	created_at INTEGER NOT NULL
+);
+CREATE TABLE org_domains (
+	domain TEXT PRIMARY KEY COLLATE NOCASE,
+	org_id INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE
+);
+CREATE INDEX org_domains_org ON org_domains(org_id);
+
+ALTER TABLE users ADD COLUMN org_id INTEGER REFERENCES organizations(id);
+ALTER TABLE devices ADD COLUMN org_id INTEGER REFERENCES organizations(id);
+ALTER TABLE address_books ADD COLUMN org_id INTEGER REFERENCES organizations(id);
+CREATE INDEX users_org ON users(org_id);
+CREATE INDEX devices_org ON devices(org_id);
+DROP INDEX address_books_shared_name;
+CREATE UNIQUE INDEX address_books_shared_name ON address_books(IFNULL(org_id, 0), name COLLATE NOCASE) WHERE personal = 0;
+
+CREATE TABLE device_groups_new (
+	id          INTEGER PRIMARY KEY,
+	guid        TEXT NOT NULL UNIQUE,
+	name        TEXT NOT NULL COLLATE NOCASE,
+	note        TEXT NOT NULL DEFAULT '',
+	created_at  INTEGER NOT NULL,
+	strategy_id INTEGER REFERENCES strategies(id) ON DELETE SET NULL,
+	org_id      INTEGER REFERENCES organizations(id)
+);
+INSERT INTO device_groups_new (id, guid, name, note, created_at, strategy_id)
+	SELECT id, guid, name, note, created_at, strategy_id FROM device_groups;
+DROP TABLE device_groups;
+ALTER TABLE device_groups_new RENAME TO device_groups;
+CREATE UNIQUE INDEX device_groups_name ON device_groups(IFNULL(org_id, 0), name COLLATE NOCASE);
+
+CREATE TABLE user_groups_new (
+	id         INTEGER PRIMARY KEY,
+	guid       TEXT NOT NULL UNIQUE,
+	name       TEXT NOT NULL COLLATE NOCASE,
+	note       TEXT NOT NULL DEFAULT '',
+	created_at INTEGER NOT NULL,
+	org_id     INTEGER REFERENCES organizations(id)
+);
+INSERT INTO user_groups_new (id, guid, name, note, created_at) SELECT id, guid, name, note, created_at FROM user_groups;
+DROP TABLE user_groups;
+ALTER TABLE user_groups_new RENAME TO user_groups;
+CREATE UNIQUE INDEX user_groups_name ON user_groups(IFNULL(org_id, 0), name COLLATE NOCASE);
+
+CREATE TABLE strategies_new (
+	id          INTEGER PRIMARY KEY,
+	guid        TEXT NOT NULL UNIQUE,
+	name        TEXT NOT NULL COLLATE NOCASE,
+	note        TEXT NOT NULL DEFAULT '',
+	options     TEXT NOT NULL DEFAULT '{}',
+	is_default  INTEGER NOT NULL DEFAULT 0,
+	modified_at INTEGER NOT NULL,
+	created_at  INTEGER NOT NULL,
+	org_id      INTEGER REFERENCES organizations(id)
+);
+INSERT INTO strategies_new (id, guid, name, note, options, is_default, modified_at, created_at)
+	SELECT id, guid, name, note, options, is_default, modified_at, created_at FROM strategies;
+DROP TABLE strategies;
+ALTER TABLE strategies_new RENAME TO strategies;
+CREATE UNIQUE INDEX strategies_name ON strategies(IFNULL(org_id, 0), name COLLATE NOCASE);
+`,
 }
+
+// noFK marks a migration that must run with foreign key enforcement off
+// (table rebuilds); integrity is checked after it commits.
+const noFK = "-- nofk\n"
 
 func (s *Store) migrate(ctx context.Context) error {
 	if _, err := s.db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL)`); err != nil {
@@ -343,23 +417,47 @@ func (s *Store) migrate(ctx context.Context) error {
 		return err
 	}
 	for i := version; i < len(migrations); i++ {
-		tx, err := s.db.BeginTx(ctx, nil)
-		if err != nil {
+		nofk := strings.HasPrefix(migrations[i], noFK)
+		if nofk {
+			if _, err := s.db.ExecContext(ctx, `PRAGMA foreign_keys = OFF`); err != nil {
+				return err
+			}
+		}
+		if err := s.applyMigration(ctx, i); err != nil {
 			return err
 		}
-		if _, err := tx.ExecContext(ctx, migrations[i]); err != nil {
-			tx.Rollback()
-			return fmt.Errorf("migration %d: %w", i+1, err)
-		}
-		if _, err := tx.ExecContext(ctx, `UPDATE schema_version SET version = ?`, i+1); err != nil {
-			tx.Rollback()
-			return err
-		}
-		if err := tx.Commit(); err != nil {
-			return err
+		if nofk {
+			if _, err := s.db.ExecContext(ctx, `PRAGMA foreign_keys = ON`); err != nil {
+				return err
+			}
+			rows, err := s.db.QueryContext(ctx, `PRAGMA foreign_key_check`)
+			if err != nil {
+				return err
+			}
+			bad := rows.Next()
+			rows.Close()
+			if bad {
+				return fmt.Errorf("migration %d: foreign key check failed", i+1)
+			}
 		}
 	}
 	return nil
+}
+
+func (s *Store) applyMigration(ctx context.Context, i int) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, migrations[i]); err != nil {
+		tx.Rollback()
+		return fmt.Errorf("migration %d: %w", i+1, err)
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE schema_version SET version = ?`, i+1); err != nil {
+		tx.Rollback()
+		return err
+	}
+	return tx.Commit()
 }
 
 func now() int64 { return time.Now().Unix() }

@@ -136,11 +136,11 @@ func TestCountActiveAdmins(t *testing.T) {
 	a := mkUser(t, s, "a", true)
 	b := mkUser(t, s, "b", true)
 	mkUser(t, s, "c", false)
-	if n, _ := s.CountActiveAdmins(ctx, a.ID); n != 1 {
+	if n, _ := s.CountActiveAdmins(ctx, 0, a.ID); n != 1 {
 		t.Errorf("other admins = %d, want 1", n)
 	}
 	s.db.Exec(`UPDATE users SET status = 0 WHERE id = ?`, b.ID)
-	if n, _ := s.CountActiveAdmins(ctx, a.ID); n != 0 {
+	if n, _ := s.CountActiveAdmins(ctx, 0, a.ID); n != 0 {
 		t.Errorf("disabled admin counted: %d", n)
 	}
 }
@@ -276,7 +276,7 @@ func TestRenameAndDeleteABTags(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	other, _ := s.CreateSharedAB(ctx, "Other", u.ID, "", "")
+	other, _ := s.CreateSharedAB(ctx, 0, "Other", u.ID, "", "")
 
 	for _, n := range []string{"a", "c"} {
 		if err := s.AddABTag(ctx, ab.ID, ABTag{Name: n, Color: 7}); err != nil {
@@ -372,7 +372,7 @@ func TestABForUserRules(t *testing.T) {
 	admin := mkUser(t, s, "admin", true)
 	reader := mkUser(t, s, "reader", false)
 	stranger := mkUser(t, s, "stranger", false)
-	ab, _ := s.CreateSharedAB(ctx, "Team", owner.ID, "", "")
+	ab, _ := s.CreateSharedAB(ctx, 0, "Team", owner.ID, "", "")
 	personal, _ := s.PersonalAB(ctx, owner.ID)
 	if err := s.SetABRule(ctx, ab.ID, reader.ID, RuleRead); err != nil {
 		t.Fatal(err)
@@ -402,14 +402,14 @@ func TestABForUserRules(t *testing.T) {
 		}
 	}
 
-	list, total, _ := s.SharedABsForUser(ctx, reader, Page{})
+	list, total, _ := s.SharedABsForUser(ctx, reader, 0, Page{})
 	if total != 1 || list[0].Rule != RuleRead {
 		t.Errorf("reader list = %d %+v", total, list)
 	}
-	if _, total, _ := s.SharedABsForUser(ctx, stranger, Page{}); total != 0 {
+	if _, total, _ := s.SharedABsForUser(ctx, stranger, 0, Page{}); total != 0 {
 		t.Errorf("stranger sees %d books", total)
 	}
-	if _, total, _ := s.SharedABsForUser(ctx, nil, Page{}); total != 1 {
+	if _, total, _ := s.SharedABsForUser(ctx, nil, 0, Page{}); total != 1 {
 		t.Errorf("panel list must hold only the shared book, got %d", total)
 	}
 

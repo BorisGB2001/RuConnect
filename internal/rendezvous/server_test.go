@@ -286,3 +286,25 @@ func TestTCPRegistration(t *testing.T) {
 		t.Fatal("peer still online after disconnect")
 	}
 }
+
+func TestAuthorizeRefuses(t *testing.T) {
+	env := startServer(t)
+	env.srv.Authorize = func(_ context.Context, r Request) string {
+		if r.Token == "outsider" {
+			return "Access denied"
+		}
+		return ""
+	}
+	registerUDP(t, env, "444555666")
+	c := dialRendezvous(t, env, true)
+	c.send(&pb.RendezvousMessage{Union: &pb.RendezvousMessage_PunchHoleRequest{PunchHoleRequest: &pb.PunchHoleRequest{
+		Id: "444555666", LicenceKey: PublicKeyString(env.srv.Key), Token: "outsider"}}})
+	if r := c.recv().GetPunchHoleResponse(); r.GetOtherFailure() != "Access denied" {
+		t.Fatalf("punch: %v", r)
+	}
+	c.send(&pb.RendezvousMessage{Union: &pb.RendezvousMessage_RequestRelay{RequestRelay: &pb.RequestRelay{
+		Id: "444555666", Uuid: "u", Token: "outsider"}}})
+	if r := c.recv().GetRelayResponse(); r.GetRefuseReason() != "Access denied" {
+		t.Fatalf("relay: %v", r)
+	}
+}

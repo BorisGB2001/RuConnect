@@ -41,6 +41,7 @@ func (s *Server) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		if err := s.store.SetDeviceServer(r.Context(), req.ID, site(r).ID); err != nil {
 			s.log.Warn("device server", "id", req.ID, "err", err)
 		}
+		s.claimOrg(r, req.ID)
 		// Push the device's strategy when the client's copy is out of date.
 		st, err := s.store.EffectiveStrategy(r.Context(), req.ID)
 		switch {
@@ -96,6 +97,7 @@ func (s *Server) handleSysinfo(w http.ResponseWriter, r *http.Request) {
 	if err := s.store.SetDeviceServer(ctx, id, site(r).ID); err != nil {
 		s.log.Warn("device server", "id", id, "err", err)
 	}
+	s.claimOrg(r, id)
 	s.applyPresets(r, id, presets{
 		UserName:        str(req["preset-user-name"]),
 		StrategyName:    str(req["preset-strategy-name"]),
@@ -130,21 +132,21 @@ func (s *Server) applyPresets(r *http.Request, id string, p presets, force bool)
 	}
 	var up store.DeviceUpdate
 	if p.UserName != "" && (force || d.UserID == nil) {
-		if u, err := s.store.UserByName(ctx, p.UserName); err == nil {
+		if u, err := s.store.UserByName(ctx, p.UserName); err == nil && u.OrgID == d.OrgID {
 			up.UserID = &u.ID
 		} else {
 			problems = append(problems, "user "+p.UserName+" not found")
 		}
 	}
 	if p.DeviceGroupName != "" && (force || d.GroupID == nil) {
-		if g, err := s.store.DeviceGroupByName(ctx, p.DeviceGroupName); err == nil {
+		if g, err := s.store.DeviceGroupByName(ctx, d.OrgID, p.DeviceGroupName); err == nil {
 			up.GroupID = &g.ID
 		} else {
 			problems = append(problems, "device group "+p.DeviceGroupName+" not found")
 		}
 	}
 	if p.StrategyName != "" {
-		if st, err := s.store.StrategyByName(ctx, p.StrategyName); err != nil {
+		if st, err := s.store.StrategyByName(ctx, d.OrgID, p.StrategyName); err != nil {
 			problems = append(problems, "strategy "+p.StrategyName+" not found")
 		} else if devStrategy, _, err := s.store.StrategyNames(ctx, id); err == nil && (force || devStrategy == "") {
 			if err := s.store.SetDeviceStrategy(ctx, id, st.ID); err != nil {
@@ -165,7 +167,7 @@ func (s *Server) applyPresets(r *http.Request, id string, p presets, force bool)
 		problems = append(problems, err.Error())
 	}
 	if p.ABName != "" {
-		ab, err := s.store.SharedABByName(ctx, p.ABName)
+		ab, err := s.store.SharedABByName(ctx, d.OrgID, p.ABName)
 		switch {
 		case err != nil:
 			problems = append(problems, "address book "+p.ABName+" not found")
@@ -243,6 +245,10 @@ func (s *Server) handleDevicesCLI(w http.ResponseWriter, r *http.Request, admin 
 		s.writeStoreError(w, err)
 		return
 	}
+	if !inScope(admin, d.OrgID) {
+		writeError(w, http.StatusNotFound, "Device "+id+" is not registered in your organization")
+		return
+	}
 	if uuid := str(req["uuid"]); d.UUID != "" && uuid != "" && uuid != d.UUID {
 		writeError(w, http.StatusConflict, "Device uuid mismatch")
 		return
@@ -286,7 +292,7 @@ func (s *Server) handleDevicesDeploy(w http.ResponseWriter, r *http.Request) {
 	}
 	d, err := s.store.GetDevice(r.Context(), req.ID)
 	switch {
-	case err == nil && d.UUID != req.UUID:
+	case err == nil && (d.UUID != req.UUID || !inScope(u, d.OrgID)):
 		writeJSON(w, http.StatusOK, map[string]string{"result": "ID_TAKEN"})
 		return
 	case errors.Is(err, store.ErrNotFound):
@@ -295,6 +301,14 @@ func (s *Server) handleDevicesDeploy(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if err := s.store.SetDeviceServer(r.Context(), req.ID, site(r).ID); err != nil {
+			s.writeStoreError(w, err)
+			return
+		}
+		org := u.OrgID
+		if org == 0 {
+			org = s.hostOrg(r)
+		}
+		if err := s.store.ClaimDeviceOrganization(r.Context(), req.ID, org); err != nil {
 			s.writeStoreError(w, err)
 			return
 		}

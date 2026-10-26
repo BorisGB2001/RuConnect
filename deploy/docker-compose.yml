@@ -1,51 +1,32 @@
-# RuConnect: RustDesk ID/relay servers (hbbs/hbbr, unmodified) + ruconnect (API and web panel).
+# RuConnect: one container with the RustDesk-compatible ID and relay servers,
+# the client API and the web panel.
 #
 #   cp .env.example .env   # set RUCONNECT_ID_SERVER to this host's public address
 #   docker compose up -d
-#   docker compose logs ruconnect   # first start prints the generated admin password
+#   docker compose logs ruconnect   # first start prints the generated admin password and the Key
 #
 # HTTPS (recommended when the panel is reachable from the internet):
 #   set RUCONNECT_DOMAIN, RUCONNECT_LISTEN=127.0.0.1:21114 and RUCONNECT_TRUST_PROXY=true in .env, then
 #   docker compose --profile https up -d
 #
-# Ports (host network): 21114 API + panel (or 80/443 with HTTPS), 21115-21117 and 21118-21119 RustDesk.
+# Ports (host network): 21114/tcp API + panel (or 80/443 with HTTPS), 21115/tcp,
+# 21116/tcp+udp ID server, 21117/tcp relay.
+#
+# Upgrading from the stock hbbs/hbbr containers: keep ./data. Its key is
+# imported on first start, so clients keep working without changes.
 services:
-  hbbs:
-    image: rustdesk/rustdesk-server:1.1.16
-    container_name: ruconnect-hbbs
-    # -r tells clients which relay to use when a direct connection fails;
-    # without it peers show online but cannot connect across NAT/firewalls.
-    command: hbbs -r ${RUCONNECT_RELAY_SERVER:-${RUCONNECT_ID_SERVER:?set RUCONNECT_ID_SERVER in .env}}
-    network_mode: host # 21115/tcp, 21116/tcp+udp, 21118/tcp
-    volumes:
-      - ./data:/root
-    depends_on:
-      - hbbr
-    restart: unless-stopped
-
-  hbbr:
-    image: rustdesk/rustdesk-server:1.1.16
-    container_name: ruconnect-hbbr
-    command: hbbr
-    network_mode: host # 21117/tcp, 21119/tcp
-    volumes:
-      - ./data:/root
-    restart: unless-stopped
-
   ruconnect:
     image: ghcr.io/borisgb2001/ruconnect:latest
     build: .. # builds from source when the image is not available
     container_name: ruconnect-server
-    network_mode: host # 21114/tcp
+    network_mode: host
     env_file:
       - path: .env
         required: false
     volumes:
       - ruconnect-data:/data
-      # hbbs writes its key pair here; only the public key is read (shown in the panel).
+      # Key of an earlier hbbs installation, imported once (read only).
       - ./data:/hbbs:ro
-    depends_on:
-      - hbbs
     restart: unless-stopped
 
   # Optional TLS front end with automatic Let's Encrypt certificates.

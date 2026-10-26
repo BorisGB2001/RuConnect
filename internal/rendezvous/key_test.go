@@ -1,6 +1,7 @@
 package rendezvous
 
 import (
+	"encoding/base64"
 	"os"
 	"path/filepath"
 	"testing"
@@ -8,11 +9,11 @@ import (
 
 func TestKeyFile(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "id_ed25519")
-	sk, err := LoadOrCreateKey(path)
+	sk, err := LoadOrCreateKey(path, "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	again, err := LoadOrCreateKey(path)
+	again, err := LoadOrCreateKey(path, "")
 	if err != nil || !again.Equal(sk) {
 		t.Fatalf("reload: %v", err)
 	}
@@ -21,8 +22,19 @@ func TestKeyFile(t *testing.T) {
 		t.Fatal("public key file mismatch")
 	}
 	os.WriteFile(path, []byte("garbage"), 0o600)
-	if _, err := LoadOrCreateKey(path); err == nil {
+	if _, err := LoadOrCreateKey(path, ""); err == nil {
 		t.Fatal("corrupt key accepted")
+	}
+	// A missing key is imported from an earlier hbbs data directory.
+	imported := filepath.Join(t.TempDir(), "id_ed25519")
+	got, err := LoadOrCreateKey(imported, path+"-orig")
+	if err != nil || got.Equal(sk) {
+		t.Fatalf("import of a missing file: %v", err)
+	}
+	os.WriteFile(path+"-orig", []byte(base64.StdEncoding.EncodeToString(sk)), 0o644)
+	fresh := filepath.Join(t.TempDir(), "id_ed25519")
+	if got, err := LoadOrCreateKey(fresh, path+"-orig"); err != nil || !got.Equal(sk) {
+		t.Fatalf("import: %v", err)
 	}
 }
 
@@ -36,7 +48,7 @@ func TestHbbsKeyCompat(t *testing.T) {
 	pub, _ := os.ReadFile(src + ".pub")
 	path := filepath.Join(t.TempDir(), "id_ed25519")
 	os.WriteFile(path, data, 0o600)
-	sk, err := LoadOrCreateKey(path)
+	sk, err := LoadOrCreateKey(path, "")
 	if err != nil || PublicKeyString(sk) != string(pub) {
 		t.Fatalf("hbbs key: %v %s vs %s", err, PublicKeyString(sk), pub)
 	}

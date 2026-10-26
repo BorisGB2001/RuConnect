@@ -292,6 +292,9 @@ func (s *Server) oidcResolveUser(r *http.Request, fl *oidcFlow, code string) (*s
 	if u.Status != store.UserNormal {
 		return nil, errors.New("your account is disabled")
 	}
+	if !s.mayUseHost(r, u) {
+		return nil, errors.New("your account belongs to another organization")
+	}
 	return u, nil
 }
 
@@ -316,7 +319,7 @@ func (s *Server) oidcCreateUser(r *http.Request, cl *oidc.Claims) (*store.User, 
 			name = fmt.Sprintf("%s-%d", base, i+1)
 		}
 		u, err := s.store.CreateUser(r.Context(), store.UserInput{
-			Name: name, DisplayName: cl.Name, Email: email, Status: store.UserNormal,
+			Name: name, DisplayName: cl.Name, Email: email, Status: store.UserNormal, OrgID: s.hostOrg(r),
 		})
 		if errors.Is(err, store.ErrConflict) {
 			continue

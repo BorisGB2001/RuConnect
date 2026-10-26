@@ -32,7 +32,7 @@ type abProfile struct {
 }
 
 func (s *Server) handleABSharedProfiles(w http.ResponseWriter, r *http.Request, u *store.User) {
-	books, total, err := s.store.SharedABsForUser(r.Context(), u, pageOf(r))
+	books, total, err := s.store.SharedABsForUser(r.Context(), u, 0, pageOf(r))
 	if err != nil {
 		s.writeStoreError(w, err)
 		return

@@ -66,8 +66,7 @@ func exportAll[T any](r *http.Request, list func(store.Page) ([]T, int, error), 
 	}
 }
 
-func (s *Server) exportConns(w http.ResponseWriter, r *http.Request) {
-	f := auditFilter(r)
+func (s *Server) exportConns(w http.ResponseWriter, r *http.Request, f store.AuditFilter) {
 	cw := startCSV(w, "connections", []string{"guid", "device_id", "peer_id", "peer_name", "ip", "conn_type", "primary_auth",
 		"two_factor", "session_id", "started", "authorized", "closed", "duration_seconds", "note"})
 	err := exportAll(r, func(p store.Page) ([]*store.ConnAudit, int, error) { return s.store.ListConnAudits(r.Context(), f, p) },
@@ -84,8 +83,7 @@ func (s *Server) exportConns(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (s *Server) exportFiles(w http.ResponseWriter, r *http.Request) {
-	f := auditFilter(r)
+func (s *Server) exportFiles(w http.ResponseWriter, r *http.Request, f store.AuditFilter) {
 	cw := startCSV(w, "file-transfers", []string{"time", "device_id", "peer_id", "peer_name", "peer_ip", "direction", "path", "is_file", "files", "largest_files"})
 	err := exportAll(r, func(p store.Page) ([]*store.FileAudit, int, error) { return s.store.ListFileAudits(r.Context(), f, p) },
 		func(a *store.FileAudit) []string {
@@ -101,8 +99,7 @@ func (s *Server) exportFiles(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (s *Server) exportAlarms(w http.ResponseWriter, r *http.Request) {
-	f := auditFilter(r)
+func (s *Server) exportAlarms(w http.ResponseWriter, r *http.Request, f store.AuditFilter) {
 	cw := startCSV(w, "alarms", []string{"time", "device_id", "conn_id", "type", "ip", "info"})
 	err := exportAll(r, func(p store.Page) ([]*store.AlarmAudit, int, error) {
 		return s.store.ListAlarmAudits(r.Context(), f, p)

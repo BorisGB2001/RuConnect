@@ -45,6 +45,9 @@ type User struct {
 	GroupID      *int64 `json:"-"`
 	GroupName    string `json:"group_name"`
 	GroupGUID    string `json:"group_guid"`
+	OrgID        int64  `json:"-"` // 0: none (global staff)
+	OrgGUID      string `json:"org_guid"`
+	OrgName      string `json:"org_name"`
 	CreatedAt    int64  `json:"created_at"`
 	UpdatedAt    int64  `json:"updated_at"`
 	PasswordHash string `json:"-"`
@@ -53,14 +56,17 @@ type User struct {
 
 const userCols = `id, guid, name, display_name, email, note, status, is_admin, totp_secret, password_hash, created_at, updated_at,
 	role, group_id, COALESCE((SELECT g.name FROM user_groups g WHERE g.id = users.group_id), ''),
-	COALESCE((SELECT g.guid FROM user_groups g WHERE g.id = users.group_id), '')`
+	COALESCE((SELECT g.guid FROM user_groups g WHERE g.id = users.group_id), ''),
+	IFNULL(org_id, 0), COALESCE((SELECT o.guid FROM organizations o WHERE o.id = users.org_id), ''),
+	COALESCE((SELECT o.name FROM organizations o WHERE o.id = users.org_id), '')`
 
 func scanUser(row interface{ Scan(...any) error }) (*User, error) {
 	var u User
 	var admin int
 	var gid sql.NullInt64
 	err := row.Scan(&u.ID, &u.GUID, &u.Name, &u.DisplayName, &u.Email, &u.Note, &u.Status, &admin,
-		&u.TOTPSecret, &u.PasswordHash, &u.CreatedAt, &u.UpdatedAt, &u.Role, &gid, &u.GroupName, &u.GroupGUID)
+		&u.TOTPSecret, &u.PasswordHash, &u.CreatedAt, &u.UpdatedAt, &u.Role, &gid, &u.GroupName, &u.GroupGUID,
+		&u.OrgID, &u.OrgGUID, &u.OrgName)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -105,6 +111,7 @@ type UserInput struct {
 	Status      int
 	IsAdmin     bool
 	Role        *string // nil keeps the current role on update
+	OrgID       int64   // organization on create (0: none); ignored on update
 }
 
 func (s *Store) CreateUser(ctx context.Context, in UserInput) (*User, error) {
@@ -124,9 +131,9 @@ func (s *Store) CreateUser(ctx context.Context, in UserInput) (*User, error) {
 	if in.Role != nil {
 		role = *in.Role
 	}
-	_, err := s.db.ExecContext(ctx, `INSERT INTO users (guid, name, display_name, email, note, password_hash, status, is_admin, role, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		NewGUID(), name, in.DisplayName, in.Email, in.Note, hash, in.Status, boolInt(in.IsAdmin), role, t, t)
+	_, err := s.db.ExecContext(ctx, `INSERT INTO users (guid, name, display_name, email, note, password_hash, status, is_admin, role, org_id, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		NewGUID(), name, in.DisplayName, in.Email, in.Note, hash, in.Status, boolInt(in.IsAdmin), role, nullID(in.OrgID), t, t)
 	if isUniqueErr(err) {
 		return nil, ErrConflict
 	}
@@ -211,23 +218,36 @@ func (s *Store) UserByID(ctx context.Context, id int64) (*User, error) {
 	return scanUser(s.db.QueryRowContext(ctx, `SELECT `+userCols+` FROM users WHERE id = ?`, id))
 }
 
-func (s *Store) CountUsers(ctx context.Context) (int, error) {
+// CountUsers counts the users of an organization (0: all).
+func (s *Store) CountUsers(ctx context.Context, org int64) (int, error) {
+	cond, args := orgCond("org_id", org)
 	var n int
-	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM users`).Scan(&n)
+	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM users WHERE `+cond, args...).Scan(&n)
 	return n, err
 }
 
-// CountActiveAdmins counts enabled administrators other than excludeID.
-func (s *Store) CountActiveAdmins(ctx context.Context, excludeID int64) (int, error) {
+// CountActiveAdmins counts enabled administrators other than excludeID in
+// an organization (NoOrg: server administrators).
+func (s *Store) CountActiveAdmins(ctx context.Context, org, excludeID int64) (int, error) {
+	cond, args := orgCond("org_id", org)
 	var n int
-	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM users WHERE is_admin = 1 AND status = 1 AND id != ?`, excludeID).Scan(&n)
+	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM users WHERE is_admin = 1 AND status = 1 AND id != ? AND `+cond,
+		append([]any{excludeID}, args...)...).Scan(&n)
 	return n, err
+}
+
+// SetUserOrganization moves a user to another organization (0: none). The
+// user leaves their user group, which belongs to the old organization.
+func (s *Store) SetUserOrganization(ctx context.Context, userID, org int64) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE users SET org_id = ?, group_id = NULL, updated_at = ? WHERE id = ?`, nullID(org), now(), userID)
+	return err
 }
 
 type UserFilter struct {
 	Status *int
 	Search string
 	OnlyID int64 // when non-zero, only this user is returned
+	Org    int64 // organization (0: any, NoOrg: none)
 }
 
 func (s *Store) ListUsers(ctx context.Context, f UserFilter, p Page) ([]*User, int, error) {
@@ -241,6 +261,11 @@ func (s *Store) ListUsers(ctx context.Context, f UserFilter, p Page) ([]*User, i
 		where = append(where, "(name LIKE ? OR display_name LIKE ? OR email LIKE ?)")
 		q := "%" + f.Search + "%"
 		args = append(args, q, q, q)
+	}
+	if f.Org != 0 {
+		c, a := orgCond("org_id", f.Org)
+		where = append(where, c)
+		args = append(args, a...)
 	}
 	if f.OnlyID != 0 {
 		// The user and, when they belong to a group, the other members of it.
@@ -372,10 +397,12 @@ type TokenInfo struct {
 	ExpiresAt  int64  `json:"expires_at"`
 }
 
-func (s *Store) ListTokens(ctx context.Context, kind string) ([]TokenInfo, error) {
+// ListTokens lists live tokens of a kind issued to users of org (0: any).
+func (s *Store) ListTokens(ctx context.Context, kind string, org int64) ([]TokenInfo, error) {
+	cond, args := orgCond("u.org_id", org)
 	rows, err := s.db.QueryContext(ctx, `SELECT substr(t.hash, 1, 16), t.kind, u.name, t.device_id, t.device_info, t.ip,
 		t.created_at, t.last_used_at, t.expires_at FROM tokens t JOIN users u ON u.id = t.user_id
-		WHERE t.kind = ? AND t.expires_at >= ? ORDER BY t.created_at DESC LIMIT 1000`, kind, now())
+		WHERE t.kind = ? AND t.expires_at >= ? AND `+cond+` ORDER BY t.created_at DESC LIMIT 1000`, append([]any{kind, now()}, args...)...)
 	if err != nil {
 		return nil, err
 	}
@@ -391,12 +418,15 @@ func (s *Store) ListTokens(ctx context.Context, kind string) ([]TokenInfo, error
 	return out, rows.Err()
 }
 
-// RevokeToken deletes the token whose hash starts with id (16 hex characters).
-func (s *Store) RevokeToken(ctx context.Context, id string) error {
+// RevokeToken deletes the token whose hash starts with id (16 hex
+// characters), if it belongs to a user of org (0: any).
+func (s *Store) RevokeToken(ctx context.Context, id string, org int64) error {
 	if len(id) != 16 {
 		return ErrNotFound
 	}
-	res, err := s.db.ExecContext(ctx, `DELETE FROM tokens WHERE substr(hash, 1, 16) = ?`, id)
+	cond, args := orgCond("org_id", org)
+	res, err := s.db.ExecContext(ctx, `DELETE FROM tokens WHERE substr(hash, 1, 16) = ?
+		AND user_id IN (SELECT id FROM users WHERE `+cond+`)`, append([]any{id}, args...)...)
 	if err != nil {
 		return err
 	}

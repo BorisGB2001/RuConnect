@@ -23,6 +23,9 @@ type Config struct {
 	IDServer    string
 	RelayServer string
 	APIServer   string
+	// Domain is the HTTPS domain of the panel (RUCONNECT_DOMAIN, used by the
+	// https compose profile).
+	Domain string
 	// TokenTTL is the lifetime of client and panel access tokens.
 	TokenTTL time.Duration
 	// OnlineTimeout is how long after the last heartbeat a device counts as online.
@@ -46,8 +49,10 @@ type Rendezvous struct {
 	RelayPort    int
 	RelayEnabled bool
 	// PrivateKeyFile holds the server key in hbbs format; the public key is
-	// written next to it with a .pub suffix.
+	// written next to it with a .pub suffix. When it is missing, the key is
+	// copied from ImportKeyFile (an earlier hbbs installation) if present.
 	PrivateKeyFile string
+	ImportKeyFile  string
 	// RelayServers are handed to clients for relayed sessions; empty means
 	// RelayServer, else the ID server host.
 	RelayServers []string
@@ -71,6 +76,7 @@ func Load() Config {
 		IDServer:           os.Getenv("RUCONNECT_ID_SERVER"),
 		RelayServer:        os.Getenv("RUCONNECT_RELAY_SERVER"),
 		APIServer:          os.Getenv("RUCONNECT_API_SERVER"),
+		Domain:             os.Getenv("RUCONNECT_DOMAIN"),
 		TokenTTL:           time.Duration(envInt("RUCONNECT_TOKEN_TTL_HOURS", 24*30)) * time.Hour,
 		OnlineTimeout:      time.Duration(envInt("RUCONNECT_ONLINE_TIMEOUT_SECONDS", 60)) * time.Second,
 		TrustProxy:         envBool("RUCONNECT_TRUST_PROXY", false),
@@ -93,6 +99,7 @@ func Load() Config {
 			RelayEnabled:   envBool("RUCONNECT_RELAY", true),
 			RelayPort:      envInt("RUCONNECT_RELAY_PORT", 21117),
 			PrivateKeyFile: env("RUCONNECT_PRIVATE_KEY_FILE", "data/id_ed25519"),
+			ImportKeyFile:  os.Getenv("RUCONNECT_IMPORT_KEY_FILE"),
 			RelayServers:   envList("RUCONNECT_RELAY_SERVERS"),
 			AlwaysRelay:    envBool("RUCONNECT_ALWAYS_RELAY", false),
 		},

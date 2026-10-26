@@ -132,6 +132,9 @@ type AuditFilter struct {
 	DeviceID string
 	PeerID   string
 	From, To int64
+	// Org keeps records of devices in this organization (0: any,
+	// NoOrg: devices without one).
+	Org int64
 }
 
 func (f AuditFilter) where(peerCol string) (string, []any) {
@@ -144,6 +147,11 @@ func (f AuditFilter) where(peerCol string) (string, []any) {
 	if f.PeerID != "" && peerCol != "" {
 		where = append(where, peerCol+" = ?")
 		args = append(args, f.PeerID)
+	}
+	if f.Org != 0 {
+		c, a := orgCond("org_id", f.Org)
+		where = append(where, "device_id IN (SELECT id FROM devices WHERE "+c+")")
+		args = append(args, a...)
 	}
 	if f.From != 0 {
 		where = append(where, "created_at >= ?")

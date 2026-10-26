@@ -6,16 +6,17 @@ import (
 	"github.com/BorisGB2001/RuConnect/internal/store"
 )
 
-// The client's "Accessible devices" tab. Administrators see everything;
-// other users see the members of their user group, their own devices and
-// the device groups granted to their user group.
+// The client's "Accessible devices" tab. Administrators see everything in
+// their scope (an organization administrator: the organization); other
+// users see the members of their user group, their own devices and the
+// device groups granted to their user group.
 
 func (s *Server) handleAccessibleGroups(w http.ResponseWriter, r *http.Request, u *store.User) {
 	var uid int64
 	if !u.IsAdmin {
 		uid = u.ID
 	}
-	groups, total, err := s.store.ListDeviceGroups(r.Context(), uid, pageOf(r))
+	groups, total, err := s.store.ListDeviceGroups(r.Context(), u.OrgID, uid, pageOf(r))
 	if err != nil {
 		s.writeStoreError(w, err)
 		return
@@ -28,7 +29,7 @@ func (s *Server) handleAccessibleGroups(w http.ResponseWriter, r *http.Request, 
 }
 
 func (s *Server) handleAccessibleUsers(w http.ResponseWriter, r *http.Request, u *store.User) {
-	f := store.UserFilter{}
+	f := store.UserFilter{Org: u.OrgID}
 	if r.URL.Query().Get("status") == "1" {
 		st := store.UserNormal
 		f.Status = &st
@@ -59,7 +60,7 @@ type peerPayload struct {
 }
 
 func (s *Server) handleAccessiblePeers(w http.ResponseWriter, r *http.Request, u *store.User) {
-	f := store.DeviceFilter{}
+	f := store.DeviceFilter{Org: u.OrgID}
 	if !u.IsAdmin {
 		f.AccessibleTo = u.ID
 	}

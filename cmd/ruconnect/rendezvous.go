@@ -17,7 +17,7 @@ import (
 // and relay server; listener failures are reported on errc.
 func startRendezvous(ctx context.Context, cfg config.Config, st *store.Store, log *slog.Logger, errc chan<- error) error {
 	rc := cfg.Rendezvous
-	sk, err := rendezvous.LoadOrCreateKey(rc.PrivateKeyFile)
+	sk, err := rendezvous.LoadOrCreateKey(rc.PrivateKeyFile, rc.ImportKeyFile)
 	if err != nil {
 		return fmt.Errorf("ID server key: %w", err)
 	}
@@ -25,6 +25,9 @@ func startRendezvous(ctx context.Context, cfg config.Config, st *store.Store, lo
 
 	rs := rendezvous.NewServer(sk, peerStore{st}, log)
 	rs.AlwaysRelay = rc.AlwaysRelay
+	rs.Authorize = func(ctx context.Context, req rendezvous.Request) string {
+		return authorizeConnection(ctx, st, req)
+	}
 	rs.RelayServers = relayServers(cfg)
 	if rc.RelayEnabled {
 		rs.RelayPort = rc.RelayPort
@@ -101,4 +104,22 @@ func (p peerStore) LoadPeer(ctx context.Context, id string) ([]byte, []byte, boo
 
 func (p peerStore) SavePeer(ctx context.Context, id string, uuid, pk []byte, ip string) error {
 	return p.st.SaveRendezvousPeer(ctx, &store.RendezvousPeer{ID: id, UUID: uuid, PK: pk, IP: ip})
+}
+
+// authorizeConnection keeps organizations apart: a client logged in as a
+// member of an organization may only reach that organization's devices.
+// Clients that are not logged in, and server staff, are not restricted.
+func authorizeConnection(ctx context.Context, st *store.Store, req rendezvous.Request) string {
+	if req.Token == "" {
+		return ""
+	}
+	u, _, err := st.UserByToken(ctx, req.Token)
+	if err != nil || u.OrgID == 0 {
+		return ""
+	}
+	d, err := st.GetDevice(ctx, req.PeerID)
+	if err == nil && d.OrgID == u.OrgID {
+		return ""
+	}
+	return "Access denied: this device belongs to another organization"
 }

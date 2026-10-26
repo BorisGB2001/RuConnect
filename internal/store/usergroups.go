@@ -15,15 +15,16 @@ type UserGroup struct {
 	Note         string   `json:"note"`
 	Users        int      `json:"users"`
 	DeviceGroups []string `json:"device_groups"` // guids of granted device groups
+	OrgID        int64    `json:"-"`
 	CreatedAt    int64    `json:"created_at"`
 }
 
-const userGroupSelect = `SELECT g.id, g.guid, g.name, g.note, (SELECT COUNT(*) FROM users u WHERE u.group_id = g.id), g.created_at
-	FROM user_groups g`
+const userGroupSelect = `SELECT g.id, g.guid, g.name, g.note, (SELECT COUNT(*) FROM users u WHERE u.group_id = g.id), g.created_at,
+	IFNULL(g.org_id, 0) FROM user_groups g`
 
 func scanUserGroup(row interface{ Scan(...any) error }) (*UserGroup, error) {
 	var g UserGroup
-	err := row.Scan(&g.ID, &g.GUID, &g.Name, &g.Note, &g.Users, &g.CreatedAt)
+	err := row.Scan(&g.ID, &g.GUID, &g.Name, &g.Note, &g.Users, &g.CreatedAt, &g.OrgID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -54,8 +55,10 @@ func (s *Store) loadAccess(ctx context.Context, groups []*UserGroup) error {
 	return nil
 }
 
-func (s *Store) ListUserGroups(ctx context.Context) ([]*UserGroup, error) {
-	rows, err := s.db.QueryContext(ctx, userGroupSelect+` ORDER BY g.name`)
+// ListUserGroups lists the groups of an organization (0: any, NoOrg: none).
+func (s *Store) ListUserGroups(ctx context.Context, org int64) ([]*UserGroup, error) {
+	cond, args := orgCond("g.org_id", org)
+	rows, err := s.db.QueryContext(ctx, userGroupSelect+` WHERE `+cond+` ORDER BY g.name`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -83,9 +86,10 @@ func (s *Store) UserGroupByGUID(ctx context.Context, guid string) (*UserGroup, e
 	return g, s.loadAccess(ctx, []*UserGroup{g})
 }
 
-// SaveUserGroup creates (guid == "") or updates a user group and replaces its
-// device group access list (device group guids).
-func (s *Store) SaveUserGroup(ctx context.Context, guid, name, note string, deviceGroups []string) (*UserGroup, error) {
+// SaveUserGroup creates (guid == "", in organization org) or updates a user
+// group and replaces its device group access list (device group guids, which
+// must belong to the group's organization).
+func (s *Store) SaveUserGroup(ctx context.Context, org int64, guid, name, note string, deviceGroups []string) (*UserGroup, error) {
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return nil, errors.New("group name is required")
@@ -97,7 +101,8 @@ func (s *Store) SaveUserGroup(ctx context.Context, guid, name, note string, devi
 	defer tx.Rollback()
 	if guid == "" {
 		guid = NewGUID()
-		_, err = tx.ExecContext(ctx, `INSERT INTO user_groups (guid, name, note, created_at) VALUES (?, ?, ?, ?)`, guid, name, note, now())
+		_, err = tx.ExecContext(ctx, `INSERT INTO user_groups (guid, name, note, org_id, created_at) VALUES (?, ?, ?, ?, ?)`,
+			guid, name, note, nullID(org), now())
 	} else {
 		var res sql.Result
 		res, err = tx.ExecContext(ctx, `UPDATE user_groups SET name = ?, note = ? WHERE guid = ?`, name, note, guid)
@@ -113,8 +118,8 @@ func (s *Store) SaveUserGroup(ctx context.Context, guid, name, note string, devi
 	if err != nil {
 		return nil, err
 	}
-	var gid int64
-	if err := tx.QueryRowContext(ctx, `SELECT id FROM user_groups WHERE guid = ?`, guid).Scan(&gid); err != nil {
+	var gid, gorg int64
+	if err := tx.QueryRowContext(ctx, `SELECT id, IFNULL(org_id, 0) FROM user_groups WHERE guid = ?`, guid).Scan(&gid, &gorg); err != nil {
 		return nil, err
 	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM user_group_access WHERE user_group_id = ?`, gid); err != nil {
@@ -122,13 +127,13 @@ func (s *Store) SaveUserGroup(ctx context.Context, guid, name, note string, devi
 	}
 	for _, dg := range deviceGroups {
 		res, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO user_group_access (user_group_id, device_group_id)
-			SELECT ?, id FROM device_groups WHERE guid = ?`, gid, dg)
+			SELECT ?, id FROM device_groups WHERE guid = ? AND IFNULL(org_id, 0) = ?`, gid, dg, gorg)
 		if err != nil {
 			return nil, err
 		}
 		if n, _ := res.RowsAffected(); n == 0 {
 			var exists int
-			tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM device_groups WHERE guid = ?`, dg).Scan(&exists)
+			tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM device_groups WHERE guid = ? AND IFNULL(org_id, 0) = ?`, dg, gorg).Scan(&exists)
 			if exists == 0 {
 				return nil, errors.New("device group " + dg + " not found")
 			}

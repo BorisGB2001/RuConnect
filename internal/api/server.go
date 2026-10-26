@@ -61,6 +61,8 @@ func (s *Server) Handler() http.Handler {
 
 	// Health check for Docker.
 	mux.HandleFunc("GET /healthz", s.handleHealth)
+	// Caddy on-demand TLS: may a certificate be issued for ?domain=?
+	mux.HandleFunc("GET /tls/ask", s.handleTLSAsk)
 
 	// Authentication.
 	mux.HandleFunc("POST /api/login", s.handleLogin)

@@ -130,7 +130,7 @@ func serve(cfg config.Config, log *slog.Logger, withAPI bool) error {
 // seedAdmin creates the first administrator on an empty database.
 func seedAdmin(cfg config.Config, st *store.Store, log *slog.Logger) error {
 	ctx := context.Background()
-	n, err := st.CountUsers(ctx)
+	n, err := st.CountUsers(ctx, 0)
 	if err != nil || n > 0 {
 		return err
 	}
