@@ -1,5 +1,7 @@
 # RuConnect
 
+[![CI](https://github.com/BorisGB2001/RuConnect/actions/workflows/ci.yml/badge.svg)](https://github.com/BorisGB2001/RuConnect/actions/workflows/ci.yml)
+
 **RuConnect** is a free, open-source management server for [RustDesk](https://github.com/rustdesk/rustdesk).
 It runs as a Docker container next to the official open-source `hbbs`/`hbbr`, anywhere: on-premises,
 in the cloud, or fully offline.

@@ -50,7 +50,7 @@
 - [x] Per-site health checks (hbbs/hbbr TCP reachability)
 
 ## Stage 4. Delivery
-- [ ] Multi-arch image (amd64, arm64) published to a registry
+- [x] Multi-arch image (amd64, arm64) published: `ghcr.io/borisgb2001/ruconnect`
 - [x] Ready `docker-compose.yml`: hbbs + hbbr + ruconnect
 - [x] Persistent volume, healthcheck, updates via `docker compose pull`
 - [x] Deployment, upgrade and backup guide (`docs/DEPLOYMENT.md`)
