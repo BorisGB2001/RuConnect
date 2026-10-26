@@ -4,7 +4,7 @@ import {
   h, pageHeader, button, iconButton, dataTable, formDialog, confirmDialog, badge, timeCell,
   toast, toastError, notice, clear, dash,
 } from '../ui.js';
-import { createInOrgIntro } from './organizations.js';
+import { orgColumn, createInOrgIntro } from './organizations.js';
 
 // Shared by the user dialog: options for the user-group select.
 export async function userGroupOptions() {
@@ -37,6 +37,7 @@ export default {
       empty: t('ugroups.empty'),
       columns: [
         { label: t('ugroups.name'), render: (g) => h('strong', { text: g.name }) },
+        orgColumn(),
         { label: t('ugroups.users'), class: 'num', render: (g) => String(g.users || 0) },
         {
           label: t('ugroups.deviceGroups'), render: (g) => {
@@ -46,7 +47,7 @@ export default {
         },
         { label: t('common.note'), class: 'col-note', key: 'note' },
         { label: t('common.created'), render: (g) => timeCell(g.created_at) },
-      ],
+      ].filter(Boolean),
       perm: 'admin',
       actions: (g) => [
         iconButton('edit', t('common.edit'), () => open(g)),

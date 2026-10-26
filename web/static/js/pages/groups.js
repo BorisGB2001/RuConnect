@@ -2,7 +2,7 @@ import { t } from '../i18n.js';
 import { api, enc } from '../api.js';
 import { buildHash } from '../router.js';
 import { strategyOptions } from './strategies.js';
-import { createInOrgIntro } from './organizations.js';
+import { orgColumn, createInOrgIntro } from './organizations.js';
 import { h, clear, pageHeader, button, iconButton, dataTable, formDialog, confirmDialog, timeCell, toast, toastError } from '../ui.js';
 
 const fields = (g = {}, strategies, stratGuid) => [
@@ -18,11 +18,12 @@ export default {
       empty: t('groups.empty'),
       columns: [
         { label: t('groups.name'), render: (g) => h('strong', { text: g.name }) },
+        orgColumn(),
         { label: t('common.note'), class: 'col-note', key: 'note' },
         { label: t('strategies.strategy'), key: 'strategy_name' },
         { label: t('groups.devices'), render: (g) => h('a', { href: buildHash('devices', { group: g.guid }), text: String(g.devices || 0) }) },
         { label: t('common.created'), render: (g) => timeCell(g.created_at) },
-      ],
+      ].filter(Boolean),
       perm: 'admin',
       actions: (g) => [
         iconButton('edit', t('common.edit'), () => edit(g)),

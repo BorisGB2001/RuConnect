@@ -4,7 +4,7 @@ import {
   h, clear, pageHeader, button, iconButton, dataTable, formDialog, confirmDialog, badge, timeCell,
   toast, toastError, notice,
 } from '../ui.js';
-import { createInOrgIntro } from './organizations.js';
+import { orgColumn, createInOrgIntro } from './organizations.js';
 
 const YN = ['Y', 'N'];
 // Common client option keys. Values: list of allowed values (shown as suggestions).
@@ -85,6 +85,7 @@ export default {
       empty: t('strategies.empty'),
       columns: [
         { label: t('strategies.name'), render: (s) => h('div', { class: 'cell-main' }, h('strong', { text: s.name }), s.is_default && badge(t('strategies.default'), 'accent')) },
+        orgColumn(),
         {
           label: t('strategies.options'), class: 'col-info', render: (s) => {
             const keys = Object.keys(s.options || {});
@@ -97,7 +98,7 @@ export default {
         { label: t('strategies.groups'), class: 'num', render: (s) => String(s.groups || 0) },
         { label: t('common.note'), class: 'col-note', key: 'note' },
         { label: t('strategies.modified'), render: (s) => timeCell(s.modified_at || s.created_at) },
-      ],
+      ].filter(Boolean),
       perm: 'admin',
       actions: (s) => [
         iconButton('edit', t('common.edit'), () => open(s)),

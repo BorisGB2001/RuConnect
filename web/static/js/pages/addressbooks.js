@@ -4,6 +4,7 @@ import {
   h, clear, pageHeader, button, iconButton, dataTable, formDialog, confirmDialog, modal, badge,
   timeCell, toast, toastError, selectInput, dash, notice,
 } from '../ui.js';
+import { orgColumn } from './organizations.js';
 
 const RULES = [1, 2, 3];
 const ruleLabel = (r) => t('ab.rule' + r);
@@ -18,12 +19,13 @@ export default {
       empty: t('ab.empty'),
       columns: [
         { label: t('ab.name'), render: (b) => h('div', { class: 'cell-main' }, h('strong', { text: b.name }), b.personal && badge(t('ab.personal'))) },
+        orgColumn(),
         { label: t('ab.owner'), key: 'owner' },
         { label: t('ab.peers'), render: (b) => h('a', { href: '#', text: String(b.peers || 0), onclick: (e) => { e.preventDefault(); peers(b); } }) },
         { label: t('ab.password'), render: (b) => (b.password ? badge(t('ab.passwordSet'), 'accent') : h('span', { class: 'muted', text: t('common.none') })) },
         { label: t('common.note'), class: 'col-note', key: 'note' },
         { label: t('common.created'), render: (b) => timeCell(b.created_at) },
-      ],
+      ].filter(Boolean),
       perm: 'operate',
       actions: (b) => [
         !b.personal && iconButton('key', t('ab.permissions'), () => rules(b)),
