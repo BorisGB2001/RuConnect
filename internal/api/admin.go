@@ -17,6 +17,7 @@ func (s *Server) adminRoutes(mux *http.ServeMux) {
 	h("GET /api/admin/overview", s.adminOverview)
 	h("PUT /api/admin/password", s.adminChangePassword)
 	h("POST /api/admin/tokens", s.adminCreateToken)
+	h("GET /api/admin/deploy-config", s.adminDeployConfig)
 
 	h("GET /api/admin/users", s.adminListUsers)
 	h("POST /api/admin/users", s.adminCreateUser)

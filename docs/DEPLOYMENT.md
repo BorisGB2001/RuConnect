@@ -58,8 +58,9 @@ site's server.
 
 ## 3. Pre-configured clients
 
-To pre-fill client settings, give users the configuration string from a configured RustDesk client
-(**Settings → Network → ID/Relay server → Export**, then **Import** on the target machine).
+The panel's **Client setup** generates, for each server, a configuration string. Users paste it in
+**Settings → Network → ID/Relay server → Import**. On installed machines, an administrator can apply it
+with `rustdesk --config <string>` (run as root / administrator).
 
 On Windows you can also rename the installer to `rustdesk-host=<id server>,key=<key>,.exe`. With no
 `api=` part, the client uses `http://<id server>:21114`, which is the RuConnect default, and a URL cannot

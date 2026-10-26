@@ -38,7 +38,7 @@
 - [x] OIDC login (Keycloak, Authentik, Yandex ID, Google, ...): PKCE, link by verified email, optional auto-create
 - [x] LDAP / Active Directory login (service bind + user bind, admin/required groups)
 - [x] Mass deployment: `/api/devices/cli` (`rustdesk --assign`), `/api/devices/deploy`, sysinfo presets
-- [ ] Deployment config generator in the panel
+- [x] Deployment config generator (API: config string, `rustdesk --config`, installer name)
 - [x] Strategies: client option sets pushed via heartbeat (device > group > default)
 - [ ] Session recording upload and playback (`/api/record`)
 - [ ] Roles and delegated administration
