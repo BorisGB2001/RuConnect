@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/ruconnect/ruconnect/internal/config"
+	"github.com/ruconnect/ruconnect/internal/oidc"
 	"github.com/ruconnect/ruconnect/internal/store"
 )
 
@@ -24,6 +25,9 @@ type Server struct {
 	log   *slog.Logger
 	web   fs.FS
 
+	oidc      *oidc.Client
+	oidcFlows *oidcFlows
+
 	nonces   *ttlSet
 	logins   *loginLimiter
 	tfa      *tfaChallenges
@@ -35,14 +39,16 @@ func New(cfg config.Config, st *store.Store, log *slog.Logger, web fs.FS) *Serve
 		log.Error("create default server", "err", err)
 	}
 	return &Server{
-		cfg:      cfg,
-		store:    st,
-		log:      log,
-		web:      web,
-		nonces:   newTTLSet(10 * time.Minute),
-		logins:   newLoginLimiter(),
-		tfa:      newTFAChallenges(),
-		sessions: newLiveSessions(),
+		cfg:       cfg,
+		store:     st,
+		log:       log,
+		web:       web,
+		oidc:      oidc.NewClient(),
+		oidcFlows: newOIDCFlows(),
+		nonces:    newTTLSet(10 * time.Minute),
+		logins:    newLoginLimiter(),
+		tfa:       newTFAChallenges(),
+		sessions:  newLiveSessions(),
 	}
 }
 
@@ -59,6 +65,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/login-options", s.handleLoginOptions)
 	mux.HandleFunc("POST /api/oidc/auth", s.handleOIDCAuth)
 	mux.HandleFunc("GET /api/oidc/auth-query", s.handleOIDCQuery)
+	mux.HandleFunc("GET /api/oidc/callback", s.handleOIDCCallback)
 
 	// Device sync (no user auth; devices identify themselves by id + uuid).
 	mux.HandleFunc("POST /api/heartbeat", s.handleHeartbeat)

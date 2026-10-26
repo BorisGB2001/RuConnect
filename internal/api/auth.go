@@ -138,26 +138,12 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) issueToken(w http.ResponseWriter, r *http.Request, u *store.User, req loginRequest) {
-	info, _ := json.Marshal(req.DeviceInfo)
-	tok, err := s.store.CreateToken(r.Context(), store.Token{
-		UserID:     u.ID,
-		DeviceID:   req.ID,
-		DeviceUUID: req.UUID,
-		DeviceInfo: string(info),
-		IP:         s.clientIP(r),
-	}, s.cfg.TokenTTL)
+	tok, err := s.loginToken(r, u, req.ID, req.UUID, req.DeviceInfo, "password")
 	if err != nil {
 		s.writeStoreError(w, err)
 		return
 	}
 	s.logins.Reset(s.clientIP(r) + "|" + strings.ToLower(u.Name))
-	// A client logging in claims its device for the user, unless an admin assigned it already.
-	if req.ID != "" {
-		if err := s.store.AssignDeviceUserIfUnset(r.Context(), req.ID, u.ID); err != nil {
-			s.log.Warn("assign device", "id", req.ID, "err", err)
-		}
-	}
-	s.log.Info("login", "user", u.Name, "device", req.ID, "type", req.DeviceInfo.Type, "ip", s.clientIP(r))
 	writeJSON(w, http.StatusOK, map[string]any{
 		"type":         "access_token",
 		"access_token": tok,
@@ -178,17 +164,27 @@ func (s *Server) handleCurrentUser(w http.ResponseWriter, r *http.Request, u *st
 	writeJSON(w, http.StatusOK, toPayload(u))
 }
 
-func (s *Server) handleLoginOptions(w http.ResponseWriter, r *http.Request) {
-	// No third-party (OIDC) providers yet.
-	writeJSON(w, http.StatusOK, []string{})
-}
-
-func (s *Server) handleOIDCAuth(w http.ResponseWriter, r *http.Request) {
-	writeError(w, http.StatusNotImplemented, "OIDC login is not configured on this server")
-}
-
-func (s *Server) handleOIDCQuery(w http.ResponseWriter, r *http.Request) {
-	writeError(w, http.StatusNotImplemented, "OIDC login is not configured on this server")
+// loginToken issues an access token for a successful login from a device.
+func (s *Server) loginToken(r *http.Request, u *store.User, deviceID, uuid string, di deviceInfo, method string) (string, error) {
+	info, _ := json.Marshal(di)
+	tok, err := s.store.CreateToken(r.Context(), store.Token{
+		UserID:     u.ID,
+		DeviceID:   deviceID,
+		DeviceUUID: uuid,
+		DeviceInfo: string(info),
+		IP:         s.clientIP(r),
+	}, s.cfg.TokenTTL)
+	if err != nil {
+		return "", err
+	}
+	// A client logging in claims its device for the user, unless an admin assigned it already.
+	if deviceID != "" {
+		if err := s.store.AssignDeviceUserIfUnset(r.Context(), deviceID, u.ID); err != nil {
+			s.log.Warn("assign device", "id", deviceID, "err", err)
+		}
+	}
+	s.log.Info("login", "user", u.Name, "method", method, "device", deviceID, "type", di.Type, "ip", s.clientIP(r))
+	return tok, nil
 }
 
 // loginLimiter blocks a key (ip|user) for a while after repeated failures.

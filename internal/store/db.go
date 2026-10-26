@@ -251,6 +251,29 @@ CREATE TABLE servers (
 ALTER TABLE devices ADD COLUMN server_id INTEGER REFERENCES servers(id) ON DELETE SET NULL;
 CREATE INDEX devices_server ON devices(server_id);
 `,
+	// 3: OpenID Connect login providers.
+	`
+CREATE TABLE oidc_providers (
+	id            INTEGER PRIMARY KEY,
+	guid          TEXT NOT NULL UNIQUE,
+	name          TEXT NOT NULL UNIQUE COLLATE NOCASE,
+	issuer        TEXT NOT NULL,
+	client_id     TEXT NOT NULL,
+	client_secret TEXT NOT NULL DEFAULT '',
+	scopes        TEXT NOT NULL DEFAULT 'openid profile email',
+	icon          TEXT NOT NULL DEFAULT '',
+	auto_create   INTEGER NOT NULL DEFAULT 0,
+	enabled       INTEGER NOT NULL DEFAULT 1,
+	created_at    INTEGER NOT NULL
+);
+CREATE TABLE oidc_identities (
+	provider_id INTEGER NOT NULL REFERENCES oidc_providers(id) ON DELETE CASCADE,
+	subject     TEXT NOT NULL,
+	user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+	created_at  INTEGER NOT NULL,
+	PRIMARY KEY (provider_id, subject)
+);
+`,
 }
 
 func (s *Store) migrate(ctx context.Context) error {
