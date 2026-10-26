@@ -1,44 +1,50 @@
-# План работ RuConnect
+# RuConnect roadmap
 
-## Технологии (предложение)
+## Technology
 
-| Часть | Выбор | Почему |
+| Part | Choice | Why |
 |---|---|---|
-| Бэкенд | Go | Один статический бинарник без зависимостей, легко собрать под любую ОС и архитектуру |
-| БД | SQLite по умолчанию, PostgreSQL опционально | Небольшая установка ставится без лишних сервисов, крупная масштабируется |
-| Веб-панель | Vue 3 + Vite, встроена в бинарник (`embed`) | Один бинарник обслуживает и API, и панель |
-| Поставка | **Docker-образ**, запускается через `docker compose` рядом с hbbs/hbbr | Один `docker compose up -d` поднимает всё. Работает на любом хосте с Docker, в том числе без интернета |
+| Backend | Go, standard library HTTP router | A single static binary, CGO-free, trivial multi-arch builds |
+| Database | SQLite (pure Go driver) by default, PostgreSQL later | Zero extra services for small installs |
+| Web panel | Plain ES modules + vendored Vue 3, embedded into the binary | No Node.js build step; one binary serves API and panel |
+| Delivery | **Docker image** started with `docker compose` next to hbbs/hbbr | One `docker compose up -d` brings up everything, also offline |
 
-## Этап 0. Основа
-- [x] Репозиторий, лицензия, README
-- [x] docker-compose для hbbs/hbbr
-- [ ] Контракт API штатного клиента (`docs/rustdesk-client-api.md`)
-- [ ] Каркас Go-сервера: конфиг через переменные окружения, логирование, миграции БД
-- [ ] Dockerfile (multi-stage, итоговый образ на distroless/alpine), CI сборки образа
+## Stage 0. Foundation
+- [x] Repository, license, README
+- [x] docker compose for hbbs/hbbr/ruconnect
+- [x] Stock client API contract (`docs/rustdesk-client-api.md`)
+- [x] Go server skeleton: env config, logging, DB migrations
+- [x] Dockerfile (multi-stage, distroless), CI building the image
 
-## Этап 1. Совместимость со штатным клиентом (MVP)
-- [ ] `/api/login`, `/api/logout`, `/api/currentUser`, `/api/login-options`
-- [ ] `/api/heartbeat`, `/api/sysinfo`: учёт устройств и статуса онлайн
-- [ ] Адресные книги: личная и общие (`/api/ab/*`), теги
-- [ ] `/api/users`, `/api/peers`, `/api/device-group/accessible`: вкладка «Группы» в клиенте
-- [ ] Аудит: подключения, передача файлов, тревоги (`/api/audit/*`)
+## Stage 1. Stock client compatibility (MVP)
+- [x] `/api/login`, `/api/logout`, `/api/currentUser`, `/api/login-options`
+- [x] TOTP two-factor login
+- [x] `/api/heartbeat`, `/api/sysinfo`: device inventory and online status
+- [x] Address books: personal and shared (`/api/ab/*`), tags, legacy mode
+- [x] `/api/users`, `/api/peers`, `/api/device-group/accessible`: the client's "Accessible devices" tab
+- [x] Audit: connections, file transfers, alarms (`/api/audit/*`), session notes
 
-## Этап 2. Веб-панель
-- [ ] Вход администратора, 2FA
-- [ ] Пользователи и группы пользователей
-- [ ] Устройства и группы устройств, права доступа
-- [ ] Общие адресные книги и права на них
-- [ ] Журналы подключений и передачи файлов, фильтры, экспорт
+## Stage 2. Web panel
+- [x] Admin login
+- [x] Users
+- [x] Devices and device groups, remote disconnect
+- [x] Shared address books and sharing rules
+- [x] Connection, file transfer and alarm logs
+- [ ] User groups, per-group access to device groups
+- [ ] Filters and CSV export for logs
+- [ ] Russian UI locale
 
-## Этап 3. Корпоративные функции
-- [ ] OIDC (Keycloak, Authentik, Яндекс ID и др.) и LDAP/Active Directory
-- [ ] Массовое развёртывание: генератор конфигурации и установщиков, `/api/devices/deploy`, `/api/devices/cli`
-- [ ] Стратегии и политики настроек клиента через heartbeat
-- [ ] Загрузка и просмотр записей сессий (`/api/record`)
-- [ ] Роли и делегирование администрирования
+## Stage 3. Enterprise features
+- [ ] OIDC (Keycloak, Authentik, Yandex ID, ...) and LDAP / Active Directory
+- [x] Mass deployment: `/api/devices/cli` (`rustdesk --assign`), `/api/devices/deploy`, sysinfo presets
+- [ ] Deployment config generator in the panel
+- [ ] Client setting strategies pushed via heartbeat
+- [ ] Session recording upload and playback (`/api/record`)
+- [ ] Roles and delegated administration
+- [ ] hbbs integration: "login required" and switch-sides checks (see contract section 6)
 
-## Этап 4. Поставка
-- [ ] Docker-образ `ruconnect` (multi-arch: amd64, arm64), публикация в реестре
-- [ ] Готовый `docker-compose.yml`: hbbs + hbbr + ruconnect, настройка через `.env`
-- [ ] Сохранение данных в volume, healthcheck, обновление через `docker compose pull`
-- [ ] Документация по развёртыванию, обновлению и резервному копированию
+## Stage 4. Delivery
+- [ ] Multi-arch image (amd64, arm64) published to a registry
+- [x] Ready `docker-compose.yml`: hbbs + hbbr + ruconnect
+- [x] Persistent volume, healthcheck, updates via `docker compose pull`
+- [ ] Deployment, upgrade and backup guide
