@@ -22,6 +22,7 @@ type AddressBook struct {
 	Name      string `json:"name"`
 	OwnerID   int64  `json:"-"`
 	Owner     string `json:"owner"`
+	OwnerGUID string `json:"owner_guid"`
 	Personal  bool   `json:"personal"`
 	Note      string `json:"note"`
 	Password  string `json:"password"`
@@ -31,14 +32,14 @@ type AddressBook struct {
 	Rule int `json:"rule"`
 }
 
-const abSelect = `SELECT a.id, a.guid, a.name, a.owner_id, COALESCE(u.name, ''), a.personal, a.note, a.password,
+const abSelect = `SELECT a.id, a.guid, a.name, a.owner_id, COALESCE(u.name, ''), COALESCE(u.guid, ''), a.personal, a.note, a.password,
 	(SELECT COUNT(*) FROM ab_peers p WHERE p.ab_id = a.id), a.created_at
 	FROM address_books a LEFT JOIN users u ON u.id = a.owner_id`
 
 func scanAB(row interface{ Scan(...any) error }) (*AddressBook, error) {
 	var a AddressBook
 	var personal int
-	err := row.Scan(&a.ID, &a.GUID, &a.Name, &a.OwnerID, &a.Owner, &personal, &a.Note, &a.Password, &a.Peers, &a.CreatedAt)
+	err := row.Scan(&a.ID, &a.GUID, &a.Name, &a.OwnerID, &a.Owner, &a.OwnerGUID, &personal, &a.Note, &a.Password, &a.Peers, &a.CreatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}

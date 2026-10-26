@@ -129,7 +129,10 @@ func (s *Server) adminCreateToken(w http.ResponseWriter, r *http.Request, u *sto
 	var req struct {
 		Days int `json:"days"`
 	}
-	readJSON(r, &req)
+	if err := readJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "Invalid request")
+		return
+	}
 	if req.Days <= 0 || req.Days > 3650 {
 		req.Days = 365
 	}

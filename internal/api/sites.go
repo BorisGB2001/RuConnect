@@ -152,12 +152,19 @@ func (s *Server) adminListServers(w http.ResponseWriter, r *http.Request, u *sto
 		s.writeStoreError(w, err)
 		return
 	}
-	for _, v := range list {
-		if v.IsDefault {
-			v.IDServer, v.Key = s.rendezvous(v)
-		}
+	type item struct {
+		*store.Server
+		// Effective values: for the default site, stored ones fall back to
+		// RUCONNECT_ID_SERVER and the hbbs key file.
+		EffectiveIDServer string `json:"effective_id_server"`
+		EffectiveKey      string `json:"effective_key"`
 	}
-	writeList(w, len(list), list)
+	out := make([]item, 0, len(list))
+	for _, v := range list {
+		host, key := s.rendezvous(v)
+		out = append(out, item{Server: v, EffectiveIDServer: host, EffectiveKey: key})
+	}
+	writeList(w, len(out), out)
 }
 
 func (s *Server) serverInput(w http.ResponseWriter, r *http.Request) (store.ServerInput, bool) {

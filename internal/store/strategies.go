@@ -54,13 +54,19 @@ func scanStrategy(row interface{ Scan(...any) error }) (*Strategy, error) {
 	return &v, nil
 }
 
-// stamp returns a modification stamp in milliseconds that differs from prev.
-func stamp(prev int64) int64 {
-	t := time.Now().UnixMilli()
-	if t <= prev {
-		t = prev + 1
+// nextStamp returns a modification time in unix seconds greater than every
+// stamp in use. Stamps are unique across strategies because the client only
+// compares the number: a device moved to another strategy must see a change.
+func nextStamp(ctx context.Context, tx *sql.Tx) (int64, error) {
+	var max int64
+	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(modified_at), 0) FROM strategies`).Scan(&max); err != nil {
+		return 0, err
 	}
-	return t
+	t := time.Now().Unix()
+	if t <= max {
+		t = max + 1
+	}
+	return t, nil
 }
 
 func (in *StrategyInput) normalize() (string, error) {
@@ -91,13 +97,17 @@ func (s *Store) CreateStrategy(ctx context.Context, in StrategyInput) (*Strategy
 	}
 	defer tx.Rollback()
 	if in.IsDefault {
-		if _, err := tx.ExecContext(ctx, `UPDATE strategies SET is_default = 0, modified_at = modified_at + 1 WHERE is_default = 1`); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE strategies SET is_default = 0 WHERE is_default = 1`); err != nil {
 			return nil, err
 		}
 	}
+	st, err := nextStamp(ctx, tx)
+	if err != nil {
+		return nil, err
+	}
 	guid := NewGUID()
 	_, err = tx.ExecContext(ctx, `INSERT INTO strategies (guid, name, note, options, is_default, modified_at, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?)`, guid, in.Name, in.Note, opts, boolInt(in.IsDefault), stamp(0), now())
+		VALUES (?, ?, ?, ?, ?, ?, ?)`, guid, in.Name, in.Note, opts, boolInt(in.IsDefault), st, now())
 	if isUniqueErr(err) {
 		return nil, ErrConflict
 	}
@@ -125,12 +135,16 @@ func (s *Store) UpdateStrategy(ctx context.Context, guid string, in StrategyInpu
 	}
 	defer tx.Rollback()
 	if in.IsDefault && !cur.IsDefault {
-		if _, err := tx.ExecContext(ctx, `UPDATE strategies SET is_default = 0, modified_at = modified_at + 1 WHERE is_default = 1`); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE strategies SET is_default = 0 WHERE is_default = 1`); err != nil {
 			return nil, err
 		}
 	}
+	st, err := nextStamp(ctx, tx)
+	if err != nil {
+		return nil, err
+	}
 	_, err = tx.ExecContext(ctx, `UPDATE strategies SET name = ?, note = ?, options = ?, is_default = ?, modified_at = ? WHERE id = ?`,
-		in.Name, in.Note, opts, boolInt(in.IsDefault), stamp(cur.ModifiedAt), cur.ID)
+		in.Name, in.Note, opts, boolInt(in.IsDefault), st, cur.ID)
 	if isUniqueErr(err) {
 		return nil, ErrConflict
 	}

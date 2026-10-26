@@ -32,6 +32,7 @@ type User struct {
 	TOTPEnabled  bool   `json:"totp_enabled"`
 	GroupID      *int64 `json:"-"`
 	GroupName    string `json:"group_name"`
+	GroupGUID    string `json:"group_guid"`
 	CreatedAt    int64  `json:"created_at"`
 	UpdatedAt    int64  `json:"updated_at"`
 	PasswordHash string `json:"-"`
@@ -39,14 +40,15 @@ type User struct {
 }
 
 const userCols = `id, guid, name, display_name, email, note, status, is_admin, totp_secret, password_hash, created_at, updated_at,
-	group_id, COALESCE((SELECT g.name FROM user_groups g WHERE g.id = users.group_id), '')`
+	group_id, COALESCE((SELECT g.name FROM user_groups g WHERE g.id = users.group_id), ''),
+	COALESCE((SELECT g.guid FROM user_groups g WHERE g.id = users.group_id), '')`
 
 func scanUser(row interface{ Scan(...any) error }) (*User, error) {
 	var u User
 	var admin int
 	var gid sql.NullInt64
 	err := row.Scan(&u.ID, &u.GUID, &u.Name, &u.DisplayName, &u.Email, &u.Note, &u.Status, &admin,
-		&u.TOTPSecret, &u.PasswordHash, &u.CreatedAt, &u.UpdatedAt, &gid, &u.GroupName)
+		&u.TOTPSecret, &u.PasswordHash, &u.CreatedAt, &u.UpdatedAt, &gid, &u.GroupName, &u.GroupGUID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}

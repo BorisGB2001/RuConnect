@@ -21,12 +21,15 @@ type Device struct {
 	IP           string `json:"ip"`
 	UserID       *int64 `json:"-"`
 	UserName     string `json:"user_name"`
+	UserGUID     string `json:"user_guid"`
 	GroupID      *int64 `json:"-"`
 	GroupName    string `json:"group_name"`
+	GroupGUID    string `json:"group_guid"`
 	ServerID     *int64 `json:"-"`
 	ServerName   string `json:"server_name"`
 	ServerSlug   string `json:"server_slug"`
 	StrategyName string `json:"strategy_name"`
+	StrategyGUID string `json:"strategy_guid"`
 	Conns        int    `json:"conns"`
 	LastOnlineAt int64  `json:"last_online_at"`
 	CreatedAt    int64  `json:"created_at"`
@@ -34,7 +37,7 @@ type Device struct {
 
 const deviceCols = `d.id, d.guid, d.uuid, d.hostname, d.username, d.os, d.cpu, d.memory, d.version, d.note, d.ip,
 	d.user_id, COALESCE(u.name, ''), d.group_id, COALESCE(g.name, ''), d.server_id, COALESCE(sv.name, ''), COALESCE(sv.slug, ''), COALESCE(st.name, ''),
-	d.conns, d.last_online_at, d.created_at`
+	COALESCE(u.guid, ''), COALESCE(g.guid, ''), COALESCE(st.guid, ''), d.conns, d.last_online_at, d.created_at`
 
 const deviceFrom = ` FROM devices d LEFT JOIN users u ON u.id = d.user_id LEFT JOIN device_groups g ON g.id = d.group_id
 	LEFT JOIN servers sv ON sv.id = d.server_id LEFT JOIN strategies st ON st.id = d.strategy_id`
@@ -43,7 +46,7 @@ func scanDevice(row interface{ Scan(...any) error }) (*Device, error) {
 	var d Device
 	var uid, gid, sid sql.NullInt64
 	err := row.Scan(&d.ID, &d.GUID, &d.UUID, &d.Hostname, &d.Username, &d.OS, &d.CPU, &d.Memory, &d.Version,
-		&d.Note, &d.IP, &uid, &d.UserName, &gid, &d.GroupName, &sid, &d.ServerName, &d.ServerSlug, &d.StrategyName,
+		&d.Note, &d.IP, &uid, &d.UserName, &gid, &d.GroupName, &sid, &d.ServerName, &d.ServerSlug, &d.StrategyName, &d.UserGUID, &d.GroupGUID, &d.StrategyGUID,
 		&d.Conns, &d.LastOnlineAt, &d.CreatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
@@ -243,13 +246,14 @@ type DeviceGroup struct {
 	Name         string `json:"name"`
 	Note         string `json:"note"`
 	StrategyName string `json:"strategy_name"`
+	StrategyGUID string `json:"strategy_guid"`
 	Devices      int    `json:"devices"`
 	CreatedAt    int64  `json:"created_at"`
 }
 
 func scanGroup(row interface{ Scan(...any) error }) (*DeviceGroup, error) {
 	var g DeviceGroup
-	err := row.Scan(&g.ID, &g.GUID, &g.Name, &g.Note, &g.StrategyName, &g.Devices, &g.CreatedAt)
+	err := row.Scan(&g.ID, &g.GUID, &g.Name, &g.Note, &g.StrategyName, &g.StrategyGUID, &g.Devices, &g.CreatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -257,7 +261,8 @@ func scanGroup(row interface{ Scan(...any) error }) (*DeviceGroup, error) {
 }
 
 const groupSelect = `SELECT g.id, g.guid, g.name, g.note,
-	COALESCE((SELECT name FROM strategies st WHERE st.id = g.strategy_id), ''), (SELECT COUNT(*) FROM devices d WHERE d.group_id = g.id), g.created_at FROM device_groups g`
+	COALESCE((SELECT name FROM strategies st WHERE st.id = g.strategy_id), ''),
+	COALESCE((SELECT guid FROM strategies st WHERE st.id = g.strategy_id), ''), (SELECT COUNT(*) FROM devices d WHERE d.group_id = g.id), g.created_at FROM device_groups g`
 
 func (s *Store) CreateDeviceGroup(ctx context.Context, name, note string) (*DeviceGroup, error) {
 	name = strings.TrimSpace(name)
