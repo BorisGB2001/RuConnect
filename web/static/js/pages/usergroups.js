@@ -46,6 +46,7 @@ export default {
         { label: t('common.note'), class: 'col-note', key: 'note' },
         { label: t('common.created'), render: (g) => timeCell(g.created_at) },
       ],
+      perm: 'admin',
       actions: (g) => [
         iconButton('edit', t('common.edit'), () => open(g)),
         iconButton('trash', t('common.delete'), () => remove(g), 'ghost-danger'),
@@ -78,7 +79,7 @@ export default {
     }
 
     clear(el).append(
-      pageHeader(t('ugroups.title'), t('ugroups.subtitle'), button(t('ugroups.create'), { kind: 'primary', iconName: 'plus', onClick: () => open() })),
+      pageHeader(t('ugroups.title'), t('ugroups.subtitle'), button(t('ugroups.create'), { kind: 'primary', iconName: 'plus', perm: 'admin', onClick: () => open() })),
       notice(t('ugroups.hint')),
       table.el);
     table.reset();

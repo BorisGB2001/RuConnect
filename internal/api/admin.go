@@ -10,9 +10,10 @@ import (
 	"github.com/ruconnect/ruconnect/internal/totp"
 )
 
-// Panel API. Every route requires an administrator token obtained via /api/login.
+// Panel API. Every route requires a panel user (administrator, helpdesk or
+// auditor) token obtained via /api/login; routePerm decides who may call it.
 func (s *Server) adminRoutes(mux *http.ServeMux) {
-	h := func(pattern string, fn userHandler) { mux.HandleFunc(pattern, s.withAdmin(fn)) }
+	h := func(pattern string, fn userHandler) { mux.HandleFunc(pattern, s.withPerm(routePerm(pattern), fn)) }
 
 	h("GET /api/admin/overview", s.adminOverview)
 	h("PUT /api/admin/password", s.adminChangePassword)
@@ -178,6 +179,7 @@ type userRequest struct {
 	Status      *int    `json:"status"`
 	IsAdmin     bool    `json:"is_admin"`
 	GroupGUID   *string `json:"group_guid"` // user group; "" removes the user from it
+	Role        *string `json:"role"`       // panel role: "", "auditor" or "helpdesk"
 }
 
 // applyUserGroup sets the user's group when the request names one.
@@ -202,7 +204,8 @@ func (s *Server) applyUserGroup(w http.ResponseWriter, r *http.Request, u *store
 }
 
 func validStatus(q userRequest) bool {
-	return q.Status == nil || *q.Status == store.UserNormal || *q.Status == store.UserDisabled || *q.Status == store.UserUnverified
+	return (q.Status == nil || *q.Status == store.UserNormal || *q.Status == store.UserDisabled || *q.Status == store.UserUnverified) &&
+		(q.Role == nil || store.ValidRole(*q.Role))
 }
 
 func (q userRequest) input() store.UserInput {
@@ -211,7 +214,7 @@ func (q userRequest) input() store.UserInput {
 		st = *q.Status
 	}
 	return store.UserInput{Name: q.Name, DisplayName: q.DisplayName, Email: q.Email, Note: q.Note,
-		Password: q.Password, Status: st, IsAdmin: q.IsAdmin}
+		Password: q.Password, Status: st, IsAdmin: q.IsAdmin, Role: q.Role}
 }
 
 func (s *Server) adminListUsers(w http.ResponseWriter, r *http.Request, u *store.User) {
@@ -234,7 +237,7 @@ func (s *Server) adminCreateUser(w http.ResponseWriter, r *http.Request, u *stor
 		return
 	}
 	if !validStatus(req) {
-		writeError(w, http.StatusBadRequest, "Invalid status")
+		writeError(w, http.StatusBadRequest, "Invalid status or role")
 		return
 	}
 	nu, err := s.store.CreateUser(r.Context(), req.input())
@@ -265,7 +268,7 @@ func (s *Server) adminUpdateUser(w http.ResponseWriter, r *http.Request, u *stor
 		return
 	}
 	if !validStatus(req) {
-		writeError(w, http.StatusBadRequest, "Invalid status")
+		writeError(w, http.StatusBadRequest, "Invalid status or role")
 		return
 	}
 	target, err := s.store.UserByGUID(r.Context(), r.PathValue("guid"))

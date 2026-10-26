@@ -41,6 +41,7 @@ type userPayload struct {
 	Note        string         `json:"note"`
 	Status      int            `json:"status"`
 	IsAdmin     bool           `json:"is_admin"`
+	Role        string         `json:"role,omitempty"` // RuConnect panel role; ignored by the client
 	Info        map[string]any `json:"info"`
 }
 
@@ -52,6 +53,7 @@ func toPayload(u *store.User) userPayload {
 		Note:        u.Note,
 		Status:      u.Status,
 		IsAdmin:     u.IsAdmin,
+		Role:        u.Role,
 		Info: map[string]any{
 			"email_verification":       false,
 			"email_alarm_notification": false,

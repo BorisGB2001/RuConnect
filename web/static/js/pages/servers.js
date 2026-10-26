@@ -1,5 +1,5 @@
 import { t } from '../i18n.js';
-import { api, enc } from '../api.js';
+import { api, enc, can } from '../api.js';
 import {
   h, clear, pageHeader, button, iconButton, formDialog, confirmDialog, badge, toast, toastError,
   copyField, notice, kv, card,
@@ -31,7 +31,7 @@ const payload = (v) => ({
 export default {
   render(el) {
     const list = h('div', { class: 'server-list' });
-    const addBtn = button(t('servers.create'), { kind: 'primary', iconName: 'plus', onClick: create, disabled: true });
+    const addBtn = button(t('servers.create'), { kind: 'primary', iconName: 'plus', onClick: create, disabled: true, perm: 'admin' });
     const intro = card(null,
       h('p', { text: t('servers.intro1') }),
       h('p', { class: 'muted', text: t('servers.intro2') }));
@@ -47,8 +47,8 @@ export default {
               h('span', { text: t('servers.devicesCount', { n: s.devices || 0 }) }))),
           h('div', { class: 'row-actions' },
             checkBtn,
-            iconButton('edit', t('common.edit'), () => edit(s)),
-            !s.is_default && iconButton('trash', t('common.delete'), () => remove(s), 'ghost-danger'))),
+            can('admin') && iconButton('edit', t('common.edit'), () => edit(s)),
+            can('admin') && !s.is_default && iconButton('trash', t('common.delete'), () => remove(s), 'ghost-danger'))),
         kv([
           [t('servers.apiUrl'), copyField(apiUrl(s))],
           [t('servers.idServer'), copyField(s.effective_id_server || s.id_server)],
@@ -86,14 +86,14 @@ export default {
       try {
         const res = await api.get('/api/admin/servers', { current: 1, pageSize: 1000 });
         const data = Array.isArray(res) ? res : (res && res.data) || [];
-        addBtn.disabled = false;
+        if (addBtn) addBtn.disabled = false;
         clear(list);
         if (!data.length) list.append(notice(t('servers.empty')));
         data.sort((a, b) => (b.is_default ? 1 : 0) - (a.is_default ? 1 : 0)).forEach((s) => list.append(serverCard(s)));
       } catch (e) {
         clear(list);
         if (e.status === 404 || e.status === 405 || e.status === 501) {
-          addBtn.disabled = true;
+          if (addBtn) addBtn.disabled = true;
           list.append(notice(t('servers.unavailable'), 'warn'));
         } else {
           list.append(notice(e.message, 'error'));

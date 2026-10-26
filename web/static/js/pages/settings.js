@@ -1,5 +1,5 @@
 import { t } from '../i18n.js';
-import { api, getUser } from '../api.js';
+import { api, getUser, can } from '../api.js';
 import { h, clear, pageHeader, card, formField, button, toast, toastError, copyField, notice, readForm, timeCell, confirmDialog } from '../ui.js';
 
 export default {
@@ -94,9 +94,9 @@ export default {
       pageHeader(t('settings.title'), t('settings.subtitle', { name: user.name || '' })),
       h('div', { class: 'grid-2' },
         card(t('settings.passwordTitle'), pwForm),
-        card(t('settings.tokenTitle'), h('p', { class: 'muted', text: t('settings.tokenIntro') }),
+        can('admin') && card(t('settings.tokenTitle'), h('p', { class: 'muted', text: t('settings.tokenIntro') }),
           h('p', { class: 'muted small', text: t('settings.tokenScope') }), tokForm, out,
           h('h3', { class: 'card-subtitle', text: t('settings.activeTokens') }), list)));
-    loadTokens();
+    if (can('admin')) loadTokens();
   },
 };

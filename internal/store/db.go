@@ -312,6 +312,10 @@ ALTER TABLE users ADD COLUMN auth_source TEXT NOT NULL DEFAULT '';
 ALTER TABLE tokens ADD COLUMN kind TEXT NOT NULL DEFAULT '';
 CREATE INDEX tokens_kind ON tokens(kind);
 `,
+	// 7: panel roles for non-administrators.
+	`
+ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT '';
+`,
 }
 
 func (s *Store) migrate(ctx context.Context) error {

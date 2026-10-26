@@ -149,9 +149,48 @@ func (s *Server) withToken(h userHandler, allowDeploy bool) http.HandlerFunc {
 	}
 }
 
-func (s *Server) withAdmin(h userHandler) http.HandlerFunc {
+// Panel permission levels.
+type perm int
+
+const (
+	permView    perm = iota // auditors, helpdesk and administrators
+	permOperate             // helpdesk and administrators
+	permAdmin               // administrators only
+)
+
+// routePerm maps a panel route pattern to the permission it needs.
+// Reads are open to every panel role, except configuration that holds
+// secrets or grants access (tokens, login providers). Helpdesk staff may
+// change devices and address books. Everything else is admin-only.
+func routePerm(pattern string) perm {
+	method, path, _ := strings.Cut(pattern, " ")
+	switch {
+	case strings.HasPrefix(path, "/api/admin/tokens"), strings.HasPrefix(path, "/api/admin/oidc"):
+		return permAdmin
+	case method == http.MethodGet, path == "/api/admin/password":
+		return permView
+	case strings.HasPrefix(path, "/api/admin/devices/"), strings.HasPrefix(path, "/api/admin/address-books"):
+		return permOperate
+	default:
+		return permAdmin
+	}
+}
+
+func userPerm(u *store.User) (perm, bool) {
+	switch {
+	case u.IsAdmin:
+		return permAdmin, true
+	case u.Role == store.RoleHelpdesk:
+		return permOperate, true
+	case u.Role == store.RoleAuditor:
+		return permView, true
+	}
+	return 0, false
+}
+
+func (s *Server) withPerm(need perm, h userHandler) http.HandlerFunc {
 	return s.withUser(func(w http.ResponseWriter, r *http.Request, u *store.User) {
-		if !u.IsAdmin {
+		if have, ok := userPerm(u); !ok || have < need {
 			writeError(w, http.StatusForbidden, "Admin required!")
 			return
 		}

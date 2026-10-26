@@ -32,7 +32,7 @@ export default {
   render(el) {
     const redirect = h('div');
     let unavailable = false;
-    const addBtn = button(t('oidc.create'), { kind: 'primary', iconName: 'plus', onClick: create });
+    const addBtn = button(t('oidc.create'), { kind: 'primary', iconName: 'plus', perm: 'admin', onClick: create });
     const table = dataTable({
       load: async (p) => {
         try {
@@ -61,6 +61,7 @@ export default {
         { label: t('oidc.status'), render: (p) => (p.enabled ? badge(t('oidc.enabledBadge'), 'ok') : badge(t('oidc.disabledBadge'), 'warn')) },
         { label: t('common.created'), render: (p) => timeCell(p.created_at) },
       ],
+      perm: 'admin',
       actions: (p) => [
         iconButton('edit', t('common.edit'), () => edit(p)),
         iconButton('trash', t('common.delete'), () => remove(p), 'ghost-danger'),

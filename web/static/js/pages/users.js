@@ -24,6 +24,10 @@ function userFields(u, groups) {
     groups && { name: 'group_guid', label: t('users.group'), type: 'select', value: groupGuid, options: groups, full: true, hint: t('users.groupHint') },
     { name: 'note', label: t('common.note'), type: 'textarea', value: u.note, full: true },
     { name: 'is_admin', label: t('users.isAdmin'), type: 'checkbox', value: u.is_admin, hint: t('users.isAdminHint') },
+    {
+      name: 'role', label: t('users.panelRole'), type: 'select', value: u.role || '', full: true, hint: t('users.panelRoleHint'),
+      options: [{ value: '', label: t('users.roleNone') }, { value: 'helpdesk', label: t('users.roleHelpdesk') }, { value: 'auditor', label: t('users.roleAuditor') }],
+    },
   ].filter(Boolean);
 }
 
@@ -31,7 +35,7 @@ function payload(v) {
   return {
     ...(v.group_guid !== undefined ? { group_guid: v.group_guid } : {}),
     name: v.name.trim(), display_name: v.display_name.trim(), email: v.email.trim(), note: v.note,
-    password: v.password, status: Number(v.status), is_admin: !!v.is_admin,
+    password: v.password, status: Number(v.status), is_admin: !!v.is_admin, role: v.role || '',
   };
 }
 
@@ -57,12 +61,15 @@ export default {
         { label: t('users.name'), render: (u) => h('div', { class: 'cell-main' }, h('strong', { text: u.name }), u.display_name && h('div', { class: 'muted small', text: u.display_name })) },
         { label: t('users.email'), key: 'email' },
         { label: t('users.group'), key: 'group_name' },
-        { label: t('users.role'), render: (u) => (u.is_admin ? badge(t('users.admin'), 'accent') : badge(t('users.user'))) },
+        { label: t('users.role'), render: (u) => (u.is_admin ? badge(t('users.admin'), 'accent')
+          : u.role === 'helpdesk' ? badge(t('users.roleHelpdesk'), 'ok')
+            : u.role === 'auditor' ? badge(t('users.roleAuditor')) : badge(t('users.user'))) },
         { label: t('users.status'), render: (u) => (u.status === 1 ? badge(t('users.active'), 'ok') : badge(t('users.disabled'), 'warn')) },
         { label: t('users.twoFactor'), render: (u) => (u.totp_enabled ? badge(t('common.on'), 'ok') : h('span', { class: 'muted', text: t('common.off') })) },
         { label: t('users.note'), class: 'col-note', key: 'note' },
         { label: t('common.created'), render: (u) => timeCell(u.created_at) },
       ],
+      perm: 'admin',
       actions: (u) => [
         iconButton('edit', t('common.edit'), () => edit(u)),
         iconButton('shield', t('users.totpManage'), () => totp(u)),
@@ -116,7 +123,7 @@ export default {
     }
 
     clear(el).append(
-      pageHeader(t('users.title'), t('users.subtitle'), button(t('users.create'), { kind: 'primary', iconName: 'plus', onClick: create })),
+      pageHeader(t('users.title'), t('users.subtitle'), button(t('users.create'), { kind: 'primary', iconName: 'plus', perm: 'admin', onClick: create })),
       h('div', { class: 'toolbar' }, searchInput(t('users.search'), q, (v) => { q = v; setParams({ q }); table.reset(); })),
       table.el);
     table.reset();

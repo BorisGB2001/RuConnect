@@ -1,7 +1,7 @@
 // RuConnect admin panel: shell, hash router and login flow.
 import { t, lang, setLang, LANGS, onLangChange } from './i18n.js';
 import { h, clear, closeAllModals, icon, button, iconButton, toast, toastError, formField, storageGet, storageSet } from './ui.js';
-import { login, loginCode, logout, getToken, getUser, setSession, onUnauthorized } from './api.js';
+import { login, loginCode, logout, getToken, getUser, setSession, onUnauthorized, can, userLevel } from './api.js';
 import { parseHash, navigate } from './router.js';
 
 import dashboard from './pages/dashboard.js';
@@ -26,7 +26,7 @@ const ROUTES = [
   { path: 'address-books', label: 'nav.addressBooks', icon: 'book', page: addressBooks },
   { path: 'audit', label: 'nav.audit', icon: 'audit', page: audit },
   { path: 'servers', label: 'nav.servers', icon: 'servers', page: servers },
-  { path: 'oidc', label: 'nav.oidc', icon: 'key', page: oidc },
+  { path: 'oidc', label: 'nav.oidc', icon: 'key', page: oidc, perm: 'admin' },
   { path: 'settings', label: 'nav.settings', icon: 'settings', page: settings },
 ];
 
@@ -67,12 +67,13 @@ function render() {
 
 function renderShell() {
   const route = parseHash();
-  const def = ROUTES.find((r) => r.path === route.path);
+  const routes = ROUTES.filter((r) => !r.perm || can(r.perm));
+  const def = routes.find((r) => r.path === route.path);
   if (!def) return navigate('dashboard', null, true);
   const user = getUser() || {};
   const content = h('main', { class: 'content', id: 'content', tabIndex: -1 });
   const nav = h('nav', { class: 'nav', 'aria-label': t('nav.main') },
-    ROUTES.map((r) => h('a', {
+    routes.map((r) => h('a', {
       href: '#/' + r.path, class: ['nav-link', r.path === def.path && 'active'],
       'aria-current': r.path === def.path ? 'page' : null,
       onclick: () => document.body.classList.remove('nav-open'),
@@ -125,7 +126,7 @@ function renderLogin() {
       showErr(t('auth.unexpected'));
       return stepPassword();
     }
-    if (!res.user || !res.user.is_admin) {
+    if (!res.user || userLevel(res.user) < 0) {
       logout(res.access_token);
       showErr(t('auth.notAdmin'));
       return stepPassword();

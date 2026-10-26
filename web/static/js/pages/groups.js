@@ -22,6 +22,7 @@ export default {
         { label: t('groups.devices'), render: (g) => h('a', { href: buildHash('devices', { group: g.guid }), text: String(g.devices || 0) }) },
         { label: t('common.created'), render: (g) => timeCell(g.created_at) },
       ],
+      perm: 'admin',
       actions: (g) => [
         iconButton('edit', t('common.edit'), () => edit(g)),
         iconButton('trash', t('common.delete'), () => remove(g), 'ghost-danger'),
@@ -53,7 +54,7 @@ export default {
       try { await api.del('/api/admin/groups/' + enc(g.guid)); toast(t('common.deleted'), 'ok'); table.reload(); } catch (e) { toastError(e); }
     }
     clear(el).append(
-      pageHeader(t('groups.title'), t('groups.subtitle'), button(t('groups.create'), { kind: 'primary', iconName: 'plus', onClick: create })),
+      pageHeader(t('groups.title'), t('groups.subtitle'), button(t('groups.create'), { kind: 'primary', iconName: 'plus', perm: 'admin', onClick: create })),
       table.el);
     table.reset();
   },

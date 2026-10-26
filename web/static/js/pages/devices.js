@@ -39,6 +39,7 @@ export default {
         { label: t('strategies.strategy'), key: 'strategy_name' },
         { label: t('devices.lastSeen'), render: (d) => (d.online ? badge(t('common.online'), 'ok') : timeCell(d.last_online_at, true)) },
       ],
+      perm: 'operate',
       actions: (d) => [
         iconButton('edit', t('common.edit'), () => edit(d)),
         iconButton('history', t('devices.audit'), () => navigate(['audit', 'conns'], { device_id: d.id })),

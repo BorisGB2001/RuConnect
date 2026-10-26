@@ -1,3 +1,4 @@
+import { can } from './api.js';
 // DOM and UI helpers shared by all pages. No innerHTML is ever used with
 // server data: text goes through text nodes, so it is escaped by the DOM.
 import { t, lang } from './i18n.js';
@@ -95,7 +96,8 @@ export function icon(name, cls) {
 }
 
 // ---- buttons ----
-export function button(label, { kind = 'secondary', iconName, onClick, title, small, type = 'button', disabled } = {}) {
+export function button(label, { kind = 'secondary', iconName, onClick, title, small, type = 'button', disabled, perm } = {}) {
+  if (perm && !can(perm)) return null; // hidden for panel roles that may not use it
   return h('button', {
     type, class: ['btn', 'btn-' + kind, small && 'btn-sm', !label && 'btn-icon'],
     title: title || null, 'aria-label': !label ? title : null, disabled: !!disabled, onclick: onClick,
@@ -398,7 +400,8 @@ export function selectInput(options, value, onChange, label) {
 //   columns: [{label, render(row) -> Node|string, class, key}]
 //   load({current, pageSize}) -> Promise<{total, data}>
 //   actions(row) -> [Node]
-export function dataTable({ columns, load, actions, empty, pageSize = 20, onError }) {
+export function dataTable({ columns, load, actions, empty, pageSize = 20, onError, perm }) {
+  if (perm && !can(perm)) actions = null; // read-only for this panel role
   const state = { current: 1, pageSize, total: 0, loading: false, seq: 0 };
   const tbody = h('tbody');
   const thead = h('thead', null, h('tr', null, columns.map((c) => h('th', { class: c.class || null, text: c.label })), actions ? h('th', { class: 'col-actions', text: '' }) : null));

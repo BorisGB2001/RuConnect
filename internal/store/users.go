@@ -20,6 +20,17 @@ const (
 	UserUnverified = -1
 )
 
+// Panel roles of users who are not administrators. Administrators can do
+// everything; auditors only read; helpdesk staff also manage devices and
+// address books.
+const (
+	RoleNone     = ""
+	RoleAuditor  = "auditor"
+	RoleHelpdesk = "helpdesk"
+)
+
+func ValidRole(r string) bool { return r == RoleNone || r == RoleAuditor || r == RoleHelpdesk }
+
 type User struct {
 	ID           int64  `json:"-"`
 	GUID         string `json:"guid"`
@@ -30,6 +41,7 @@ type User struct {
 	Status       int    `json:"status"`
 	IsAdmin      bool   `json:"is_admin"`
 	TOTPEnabled  bool   `json:"totp_enabled"`
+	Role         string `json:"role"`
 	GroupID      *int64 `json:"-"`
 	GroupName    string `json:"group_name"`
 	GroupGUID    string `json:"group_guid"`
@@ -40,7 +52,7 @@ type User struct {
 }
 
 const userCols = `id, guid, name, display_name, email, note, status, is_admin, totp_secret, password_hash, created_at, updated_at,
-	group_id, COALESCE((SELECT g.name FROM user_groups g WHERE g.id = users.group_id), ''),
+	role, group_id, COALESCE((SELECT g.name FROM user_groups g WHERE g.id = users.group_id), ''),
 	COALESCE((SELECT g.guid FROM user_groups g WHERE g.id = users.group_id), '')`
 
 func scanUser(row interface{ Scan(...any) error }) (*User, error) {
@@ -48,7 +60,7 @@ func scanUser(row interface{ Scan(...any) error }) (*User, error) {
 	var admin int
 	var gid sql.NullInt64
 	err := row.Scan(&u.ID, &u.GUID, &u.Name, &u.DisplayName, &u.Email, &u.Note, &u.Status, &admin,
-		&u.TOTPSecret, &u.PasswordHash, &u.CreatedAt, &u.UpdatedAt, &gid, &u.GroupName, &u.GroupGUID)
+		&u.TOTPSecret, &u.PasswordHash, &u.CreatedAt, &u.UpdatedAt, &u.Role, &gid, &u.GroupName, &u.GroupGUID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -92,6 +104,7 @@ type UserInput struct {
 	Password    string
 	Status      int
 	IsAdmin     bool
+	Role        *string // nil keeps the current role on update
 }
 
 func (s *Store) CreateUser(ctx context.Context, in UserInput) (*User, error) {
@@ -107,9 +120,13 @@ func (s *Store) CreateUser(ctx context.Context, in UserInput) (*User, error) {
 		}
 	}
 	t := now()
-	_, err := s.db.ExecContext(ctx, `INSERT INTO users (guid, name, display_name, email, note, password_hash, status, is_admin, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		NewGUID(), name, in.DisplayName, in.Email, in.Note, hash, in.Status, boolInt(in.IsAdmin), t, t)
+	role := ""
+	if in.Role != nil {
+		role = *in.Role
+	}
+	_, err := s.db.ExecContext(ctx, `INSERT INTO users (guid, name, display_name, email, note, password_hash, status, is_admin, role, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		NewGUID(), name, in.DisplayName, in.Email, in.Note, hash, in.Status, boolInt(in.IsAdmin), role, t, t)
 	if isUniqueErr(err) {
 		return nil, ErrConflict
 	}
@@ -135,9 +152,13 @@ func (s *Store) UpdateUser(ctx context.Context, guid string, in UserInput) (*Use
 			return nil, err
 		}
 	}
+	role := u.Role
+	if in.Role != nil {
+		role = *in.Role
+	}
 	_, err = s.db.ExecContext(ctx, `UPDATE users SET name = ?, display_name = ?, email = ?, note = ?, password_hash = ?,
-		status = ?, is_admin = ?, updated_at = ? WHERE id = ?`,
-		name, in.DisplayName, in.Email, in.Note, hash, in.Status, boolInt(in.IsAdmin), now(), u.ID)
+		status = ?, is_admin = ?, role = ?, updated_at = ? WHERE id = ?`,
+		name, in.DisplayName, in.Email, in.Note, hash, in.Status, boolInt(in.IsAdmin), role, now(), u.ID)
 	if isUniqueErr(err) {
 		return nil, ErrConflict
 	}

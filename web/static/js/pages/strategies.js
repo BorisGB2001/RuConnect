@@ -97,6 +97,7 @@ export default {
         { label: t('common.note'), class: 'col-note', key: 'note' },
         { label: t('strategies.modified'), render: (s) => timeCell(s.modified_at || s.created_at) },
       ],
+      perm: 'admin',
       actions: (s) => [
         iconButton('edit', t('common.edit'), () => open(s)),
         iconButton('trash', t('common.delete'), () => remove(s), 'ghost-danger'),
@@ -129,7 +130,7 @@ export default {
     }
 
     clear(el).append(
-      pageHeader(t('strategies.title'), t('strategies.subtitle'), button(t('strategies.create'), { kind: 'primary', iconName: 'plus', onClick: () => open() })),
+      pageHeader(t('strategies.title'), t('strategies.subtitle'), button(t('strategies.create'), { kind: 'primary', iconName: 'plus', perm: 'admin', onClick: () => open() })),
       notice(t('strategies.precedence')),
       table.el);
     table.reset();

@@ -41,7 +41,7 @@
 - [x] Deployment config generator: config string, `rustdesk --config`, installer name
 - [x] Strategies: client option sets pushed via heartbeat (device > group > default)
 - [ ] Session recording upload and playback (`/api/record`)
-- [ ] Roles and delegated administration
+- [x] Roles: administrator, helpdesk (devices, address books), auditor (read-only)
 - [ ] hbbs integration: "login required" and switch-sides checks (see contract section 6)
 
 ## Multi-server

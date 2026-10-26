@@ -24,6 +24,7 @@ export default {
         { label: t('common.note'), class: 'col-note', key: 'note' },
         { label: t('common.created'), render: (b) => timeCell(b.created_at) },
       ],
+      perm: 'operate',
       actions: (b) => [
         !b.personal && iconButton('key', t('ab.permissions'), () => rules(b)),
         iconButton('list', t('ab.viewPeers'), () => peers(b)),
@@ -96,7 +97,7 @@ export default {
         const us = h('select', { 'aria-label': t('ab.user') }, avail.map((u) => h('option', { value: u.guid, text: u.name })));
         const rs = h('select', { 'aria-label': t('ab.access') }, RULES.map((x) => h('option', { value: x, text: ruleLabel(x), selected: x === 1 })));
         adder.append(h('h3', { text: t('ab.grant') }), h('div', { class: 'rule-add-row' }, us, rs,
-          button(t('ab.add'), { kind: 'primary', iconName: 'plus', onClick: async () => {
+          button(t('ab.add'), { kind: 'primary', iconName: 'plus', perm: 'operate', onClick: async () => {
             try { await setRule(us.value, Number(rs.value)); load(); } catch (e) { toastError(e); }
           } })));
       }
@@ -127,7 +128,7 @@ export default {
     }
 
     clear(el).append(
-      pageHeader(t('ab.title'), t('ab.subtitle'), button(t('ab.create'), { kind: 'primary', iconName: 'plus', onClick: create })),
+      pageHeader(t('ab.title'), t('ab.subtitle'), button(t('ab.create'), { kind: 'primary', iconName: 'plus', perm: 'operate', onClick: create })),
       table.el);
     table.reset();
   },

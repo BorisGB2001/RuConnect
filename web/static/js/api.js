@@ -20,6 +20,17 @@ export function getToken() { return storageGet('sessionStorage', TOKEN_KEY); }
 export function getUser() {
   try { return JSON.parse(storageGet('sessionStorage', USER_KEY) || 'null'); } catch { return null; }
 }
+// Panel permission of the signed-in user: 'admin' > 'operate' > 'view'.
+const LEVELS = { view: 0, operate: 1, admin: 2 };
+export function userLevel(u = getUser()) {
+  if (!u) return -1;
+  if (u.is_admin) return LEVELS.admin;
+  if (u.role === 'helpdesk') return LEVELS.operate;
+  if (u.role === 'auditor') return LEVELS.view;
+  return -1;
+}
+export function can(level) { return userLevel() >= LEVELS[level]; }
+
 export function setSession(token, user) {
   storageSet('sessionStorage', TOKEN_KEY, token);
   storageSet('sessionStorage', USER_KEY, user ? JSON.stringify(user) : null);
