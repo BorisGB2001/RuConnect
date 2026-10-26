@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"sync"
@@ -80,7 +81,13 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 			s.writeStoreError(w, err)
 			return
 		}
-		if u == nil || !u.CheckPassword(req.Password) {
+		ok := u != nil && u.CheckPassword(req.Password)
+		if !ok {
+			if lu := s.ldapLogin(r, u, req.Username, req.Password); lu != nil {
+				u, ok = lu, true
+			}
+		}
+		if !ok {
 			s.logins.Fail(key)
 			s.log.Warn("login failed", "user", req.Username, "ip", ip)
 			writeError(w, http.StatusUnauthorized, "Wrong username or password")
@@ -116,7 +123,9 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		if code == "" {
 			code = req.VerificationCode
 		}
-		if !strings.EqualFold(u.Name, strings.TrimSpace(req.Username)) || !totp.Verify(u.TOTPSecret, code, time.Now()) {
+		used := fmt.Sprintf("%d|%s", u.ID, strings.TrimSpace(code))
+		if !strings.EqualFold(u.Name, strings.TrimSpace(req.Username)) || s.totpUsed.Has(used) ||
+			!totp.Verify(u.TOTPSecret, code, time.Now()) {
 			s.logins.Fail(key)
 			if s.tfa.Fail(req.Secret) {
 				writeError(w, http.StatusUnauthorized, "Too many wrong codes, please log in again")
@@ -126,6 +135,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.tfa.Done(req.Secret)
+		s.totpUsed.Add(used)
 		if u.Status != store.UserNormal {
 			writeError(w, http.StatusForbidden, "User is disabled")
 			return

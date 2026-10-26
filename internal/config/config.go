@@ -31,6 +31,14 @@ type Config struct {
 	TrustProxy bool
 	// AuditRetentionDays deletes audit records older than this; 0 keeps them forever.
 	AuditRetentionDays int
+	// LDAP enables directory logins when URL and BaseDN are set.
+	LDAP LDAP
+}
+
+type LDAP struct {
+	URL, BindDN, BindPassword, BaseDN, UserFilter, NameAttr string
+	AdminGroupDN, RequiredGroup                             string
+	StartTLS, InsecureSkipVerify                            bool
 }
 
 func Load() Config {
@@ -47,6 +55,18 @@ func Load() Config {
 		OnlineTimeout:      time.Duration(envInt("RUCONNECT_ONLINE_TIMEOUT_SECONDS", 60)) * time.Second,
 		TrustProxy:         envBool("RUCONNECT_TRUST_PROXY", false),
 		AuditRetentionDays: envInt("RUCONNECT_AUDIT_RETENTION_DAYS", 0),
+		LDAP: LDAP{
+			URL:                os.Getenv("RUCONNECT_LDAP_URL"),
+			BindDN:             os.Getenv("RUCONNECT_LDAP_BIND_DN"),
+			BindPassword:       os.Getenv("RUCONNECT_LDAP_BIND_PASSWORD"),
+			BaseDN:             os.Getenv("RUCONNECT_LDAP_BASE_DN"),
+			UserFilter:         os.Getenv("RUCONNECT_LDAP_USER_FILTER"),
+			NameAttr:           os.Getenv("RUCONNECT_LDAP_NAME_ATTR"),
+			AdminGroupDN:       os.Getenv("RUCONNECT_LDAP_ADMIN_GROUP"),
+			RequiredGroup:      os.Getenv("RUCONNECT_LDAP_REQUIRED_GROUP"),
+			StartTLS:           envBool("RUCONNECT_LDAP_STARTTLS", false),
+			InsecureSkipVerify: envBool("RUCONNECT_LDAP_INSECURE_SKIP_VERIFY", false),
+		},
 	}
 }
 

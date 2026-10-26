@@ -400,6 +400,16 @@ func (s *Store) AddABTag(ctx context.Context, abID int64, t ABTag) error {
 	return err
 }
 
+// EnsureABTag creates a tag unless it exists, keeping an existing color.
+func (s *Store) EnsureABTag(ctx context.Context, abID int64, t ABTag) error {
+	if strings.TrimSpace(t.Name) == "" {
+		return errors.New("tag name is required")
+	}
+	_, err := s.db.ExecContext(ctx, `INSERT INTO ab_tags (ab_id, name, color) VALUES (?, ?, ?)
+		ON CONFLICT(ab_id, name) DO NOTHING`, abID, t.Name, t.Color)
+	return err
+}
+
 func (s *Store) UpdateABTagColor(ctx context.Context, abID int64, t ABTag) error {
 	res, err := s.db.ExecContext(ctx, `UPDATE ab_tags SET color = ? WHERE ab_id = ? AND name = ?`, t.Color, abID, t.Name)
 	if err != nil {

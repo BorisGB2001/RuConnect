@@ -29,6 +29,7 @@ type Server struct {
 	oidcFlows *oidcFlows
 
 	nonces   *ttlSet
+	totpUsed *ttlSet // recently accepted TOTP codes, to stop replays
 	logins   *loginLimiter
 	tfa      *tfaChallenges
 	sessions *liveSessions
@@ -46,6 +47,7 @@ func New(cfg config.Config, st *store.Store, log *slog.Logger, web fs.FS) *Serve
 		oidc:      oidc.NewClient(),
 		oidcFlows: newOIDCFlows(),
 		nonces:    newTTLSet(10 * time.Minute),
+		totpUsed:  newTTLSet(2 * time.Minute),
 		logins:    newLoginLimiter(),
 		tfa:       newTFAChallenges(),
 		sessions:  newLiveSessions(),
@@ -201,8 +203,19 @@ func newTTLSet(ttl time.Duration) *ttlSet {
 	return &ttlSet{ttl: ttl, items: map[string]time.Time{}}
 }
 
-// Seen records key and reports whether it was already present.
-func (t *ttlSet) Seen(key string) bool {
+// Has reports whether key was added within the TTL.
+func (t *ttlSet) Has(key string) bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	exp, ok := t.items[key]
+	return ok && time.Now().Before(exp)
+}
+
+// Add remembers key for the TTL. Empty keys are ignored.
+func (t *ttlSet) Add(key string) {
+	if strings.HasSuffix(key, "|") {
+		return
+	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	n := time.Now()
@@ -214,11 +227,7 @@ func (t *ttlSet) Seen(key string) bool {
 		}
 		t.last = n
 	}
-	if exp, ok := t.items[key]; ok && n.Before(exp) {
-		return true
-	}
 	t.items[key] = n.Add(t.ttl)
-	return false
 }
 
 // liveSessions tracks the connection ids each device reported in its last

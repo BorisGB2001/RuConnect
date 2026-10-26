@@ -163,7 +163,7 @@ func (s *Server) applyPresets(r *http.Request, id string, p presets, force bool)
 				}
 				if p.ABTag != "" {
 					peer.Tags = []string{p.ABTag}
-					if err := s.store.AddABTag(ctx, ab.ID, store.ABTag{Name: p.ABTag, Color: defaultTagColor}); err != nil {
+					if err := s.store.EnsureABTag(ctx, ab.ID, store.ABTag{Name: p.ABTag, Color: defaultTagColor}); err != nil {
 						problems = append(problems, err.Error())
 					}
 				}

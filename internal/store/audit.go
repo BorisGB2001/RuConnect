@@ -41,10 +41,12 @@ type ConnEvent struct {
 }
 
 // openConn finds the not yet closed audit row of a device connection.
+// The "new" record is sent before login, when the client's session id is
+// still 0, so an unknown session ("" or "0") matches any open row.
 func (s *Store) openConn(ctx context.Context, e ConnEvent) (int64, error) {
 	var id int64
 	err := s.db.QueryRowContext(ctx, `SELECT id FROM audit_conns WHERE device_id = ? AND conn_id = ? AND closed_at = 0
-		AND (session_id = ? OR session_id = '' OR ? = '') ORDER BY id DESC LIMIT 1`,
+		AND (session_id = ? OR session_id IN ('', '0') OR ? IN ('', '0')) ORDER BY id DESC LIMIT 1`,
 		e.DeviceID, e.ConnID, e.SessionID, e.SessionID).Scan(&id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return 0, nil
@@ -55,17 +57,19 @@ func (s *Store) openConn(ctx context.Context, e ConnEvent) (int64, error) {
 // RecordConnEvent folds a connection event into a single per-session audit row.
 func (s *Store) RecordConnEvent(ctx context.Context, e ConnEvent) error {
 	t := now()
+	if e.SessionID == "0" {
+		e.SessionID = ""
+	}
 	id, err := s.openConn(ctx, e)
 	if err != nil {
 		return err
 	}
 	switch e.Action {
 	case "new":
-		if id != 0 {
-			// conn ids restart with the client process; close the stale row.
-			if _, err := s.db.ExecContext(ctx, `UPDATE audit_conns SET closed_at = ? WHERE id = ?`, t, id); err != nil {
-				return err
-			}
+		// conn ids restart with the client process; close any stale open row.
+		if _, err := s.db.ExecContext(ctx, `UPDATE audit_conns SET closed_at = ? WHERE device_id = ? AND conn_id = ? AND closed_at = 0`,
+			t, e.DeviceID, e.ConnID); err != nil {
+			return err
 		}
 		_, err = s.db.ExecContext(ctx, `INSERT INTO audit_conns (guid, device_id, device_uuid, conn_id, session_id, ip, conn_audit_ref, created_at)
 			VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, NewGUID(), e.DeviceID, e.DeviceUUID, e.ConnID, e.SessionID, e.IP, e.ConnAuditRef, t)
@@ -91,11 +95,12 @@ func (s *Store) RecordConnEvent(ctx context.Context, e ConnEvent) error {
 	}
 }
 
-// ConnGUIDBySession returns the GUID of the newest audit row of a session on a device.
-func (s *Store) ConnGUIDBySession(ctx context.Context, deviceID, sessionID string) (string, error) {
+// ConnGUIDBySession returns the GUID of the newest audit row of a session on
+// a device. A non-empty peerID also requires the controller's id to match.
+func (s *Store) ConnGUIDBySession(ctx context.Context, deviceID, sessionID, peerID string) (string, error) {
 	var guid string
 	err := s.db.QueryRowContext(ctx, `SELECT guid FROM audit_conns WHERE device_id = ? AND session_id = ?
-		ORDER BY id DESC LIMIT 1`, deviceID, sessionID).Scan(&guid)
+		AND (? = '' OR peer_id = ?) ORDER BY id DESC LIMIT 1`, deviceID, sessionID, peerID, peerID).Scan(&guid)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", nil
 	}
@@ -108,8 +113,11 @@ func (s *Store) SetConnNoteBySession(ctx context.Context, deviceID, sessionID, n
 	return err
 }
 
-func (s *Store) SetConnNote(ctx context.Context, guid, note string) error {
-	res, err := s.db.ExecContext(ctx, `UPDATE audit_conns SET note = ? WHERE guid = ?`, note, guid)
+// SetConnNote sets the note of an audit row. A non-empty peerID restricts
+// the update to sessions opened from that controller.
+func (s *Store) SetConnNote(ctx context.Context, guid, note, peerID string) error {
+	res, err := s.db.ExecContext(ctx, `UPDATE audit_conns SET note = ? WHERE guid = ? AND (? = '' OR peer_id = ?)`,
+		note, guid, peerID, peerID)
 	if err != nil {
 		return err
 	}

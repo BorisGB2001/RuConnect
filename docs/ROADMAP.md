@@ -36,7 +36,7 @@
 
 ## Stage 3. Enterprise features
 - [x] OIDC login (Keycloak, Authentik, Yandex ID, Google, ...): PKCE, link by verified email, optional auto-create
-- [ ] LDAP / Active Directory
+- [x] LDAP / Active Directory login (service bind + user bind, admin/required groups)
 - [x] Mass deployment: `/api/devices/cli` (`rustdesk --assign`), `/api/devices/deploy`, sysinfo presets
 - [ ] Deployment config generator in the panel
 - [x] Strategies: client option sets pushed via heartbeat (device > group > default)

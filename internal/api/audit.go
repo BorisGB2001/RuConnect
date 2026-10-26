@@ -29,7 +29,8 @@ func (s *Server) handleAuditConn(w http.ResponseWriter, r *http.Request) {
 		writeEmpty(w)
 		return
 	}
-	if nonce := str(req["nonce"]); nonce != "" && s.nonces.Seen("conn|"+nonce) {
+	nonce := str(req["nonce"])
+	if nonce != "" && s.nonces.Has("conn|"+nonce) {
 		writeEmpty(w)
 		return
 	}
@@ -62,6 +63,7 @@ func (s *Server) handleAuditConn(w http.ResponseWriter, r *http.Request) {
 		s.writeStoreError(w, err)
 		return
 	}
+	s.nonces.Add("conn|" + nonce)
 	writeEmpty(w)
 }
 
@@ -71,7 +73,8 @@ func (s *Server) handleAuditFile(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "Invalid request")
 		return
 	}
-	if nonce := str(req["nonce"]); nonce != "" && s.nonces.Seen("file|"+nonce) {
+	nonce := str(req["nonce"])
+	if nonce != "" && s.nonces.Has("file|"+nonce) {
 		writeEmpty(w)
 		return
 	}
@@ -104,6 +107,7 @@ func (s *Server) handleAuditFile(w http.ResponseWriter, r *http.Request) {
 		s.writeStoreError(w, err)
 		return
 	}
+	s.nonces.Add("file|" + nonce)
 	writeEmpty(w)
 }
 
@@ -113,7 +117,8 @@ func (s *Server) handleAuditAlarm(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "Invalid request")
 		return
 	}
-	if nonce := str(req["nonce"]); nonce != "" && s.nonces.Seen("alarm|"+nonce) {
+	nonce := str(req["nonce"])
+	if nonce != "" && s.nonces.Has("alarm|"+nonce) {
 		writeEmpty(w)
 		return
 	}
@@ -137,6 +142,7 @@ func (s *Server) handleAuditAlarm(w http.ResponseWriter, r *http.Request) {
 		s.writeStoreError(w, err)
 		return
 	}
+	s.nonces.Add("alarm|" + nonce)
 	s.log.Warn("security alarm", "device", a.DeviceID, "typ", a.Typ, "ip", a.IP)
 	writeEmpty(w)
 }
@@ -145,12 +151,25 @@ func (s *Server) handleAuditAlarm(w http.ResponseWriter, r *http.Request) {
 // the caller opened, so the client can attach a note at the end.
 func (s *Server) handleAuditConnActive(w http.ResponseWriter, r *http.Request, u *store.User) {
 	q := r.URL.Query()
-	guid, err := s.store.ConnGUIDBySession(r.Context(), s.normalizePeerID(r, q.Get("id")), q.Get("session_id"))
+	guid, err := s.store.ConnGUIDBySession(r.Context(), s.normalizePeerID(r, q.Get("id")), q.Get("session_id"), s.controllerID(r, u))
 	if err != nil {
 		s.writeStoreError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, guid)
+}
+
+// controllerID limits session notes to sessions opened from the device the
+// caller logged in on. Administrators may annotate any session ("").
+func (s *Server) controllerID(r *http.Request, u *store.User) string {
+	if u.IsAdmin {
+		return ""
+	}
+	_, tok, err := s.authUser(r)
+	if err != nil || tok.DeviceID == "" {
+		return "\x00" // matches nothing
+	}
+	return tok.DeviceID
 }
 
 func (s *Server) handleAuditNote(w http.ResponseWriter, r *http.Request, u *store.User) {
@@ -166,7 +185,7 @@ func (s *Server) handleAuditNote(w http.ResponseWriter, r *http.Request, u *stor
 	if len(note) > 1024 {
 		note = note[:1024]
 	}
-	if err := s.store.SetConnNote(r.Context(), req.GUID, note); err != nil {
+	if err := s.store.SetConnNote(r.Context(), req.GUID, note, s.controllerID(r, u)); err != nil {
 		s.writeStoreError(w, err)
 		return
 	}
