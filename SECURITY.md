@@ -11,6 +11,16 @@ Please report vulnerabilities privately through GitHub security advisories
   stock RustDesk client sends no credentials there. A device id is bound to the machine uuid that registered
   it first. Later reports for that id from another uuid are rejected, and so are audit records from
   unregistered devices. An administrator can delete a device to let a new machine claim its id.
+- **ID server:** an ID is bound to the machine (uuid) and key that registered it first; the binding is stored
+  in the database. Registrations of the same ID from another machine, and key changes from a new address,
+  are refused, and registrations are rate-limited per source IP. Connection requests and relay sessions
+  must carry the server Key. The ID server signs each peer's public key with the server key, so clients
+  can verify the peer and sessions are end-to-end encrypted; the relay only forwards encrypted traffic.
+- **Organizations:** panel staff of an organization see only its records (others answer `404`). Users sign
+  in only through their organization's domains. The built-in ID server refuses connection requests from a
+  client logged in as an organization member to devices outside that organization; clients that are not
+  logged in are not restricted by organization. `/tls/ask` approves certificates only for the configured
+  domain and API host and for organization domains.
 - **User tokens** are 256-bit random values, stored as SHA-256 hashes. Changing a password signs out all
   other sessions. **Deployment tokens** only work for `rustdesk --assign` / `--deploy`, are listed in the
   panel and can be revoked.
